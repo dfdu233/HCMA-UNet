@@ -23,7 +23,7 @@ from nnunetv2.utilities.utils import get_filenames_of_train_images_and_targets
 
 class ExperimentPlanner(object):
     def __init__(self, dataset_name_or_id: Union[str, int],
-                 gpu_memory_target_in_gb: float = 8,
+                 gpu_memory_target_in_gb: float = 12,
                  preprocessor_name: str = 'DefaultPreprocessor', plans_name: str = 'nnUNetPlans',
                  overwrite_target_spacing: Union[List[float], Tuple[float, ...]] = None,
                  suppress_transpose: bool = False):
@@ -256,7 +256,8 @@ class ExperimentPlanner(object):
         # ideal because large initial patch sizes increase computation time because more iterations in the while loop
         # further down may be required.
         if len(spacing) == 3:
-            initial_patch_size = [round(i) for i in tmp * (256 ** 3 / np.prod(tmp)) ** (1 / 3)]
+ #           initial_patch_size = [round(i) for i in tmp * (256 ** 3 / np.prod(tmp)) ** (1 / 3)]
+            initial_patch_size = [128,128,128]
         elif len(spacing) == 2:
             initial_patch_size = [round(i) for i in tmp * (2048 ** 2 / np.prod(tmp)) ** (1 / 2)]
         else:
@@ -266,8 +267,11 @@ class ExperimentPlanner(object):
         # this is different from how nnU-Net v1 does it!
         # todo patch size can still get too large because we pad the patch size to a multiple of 2**n
         initial_patch_size = np.array([min(i, j) for i, j in zip(initial_patch_size, median_shape[:len(spacing)])])
-
-        # use that to get the network topology. Note that this changes the patch_size depending on the number of
+        if len(spacing) == 3:
+ #           initial_patch_size = [round(i) for i in tmp * (256 ** 3 / np.prod(tmp)) ** (1 / 3)]
+            initial_patch_size = [128,128,128]
+ 
+# use that to get the network topology. Note that this changes the patch_size depending on the number of
         # pooling operations (must be divisible by 2**num_pool in each axis)
         network_num_pool_per_axis, pool_op_kernel_sizes, conv_kernel_sizes, patch_size, \
         shape_must_be_divisible_by = get_pool_and_conv_props(spacing, initial_patch_size,

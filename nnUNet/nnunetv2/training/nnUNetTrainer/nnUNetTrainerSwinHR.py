@@ -2,10 +2,10 @@ import torch
 from torch import nn
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.plans_handling.plans_handler import ConfigurationManager, PlansManager
-from nnunetv2.training.nnUNetTrainer.variants.network_architecture.HCMA import HCMA
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.SwinHR import SwinHR
 import math
 
-class nnUNetTrainerHCMA(nnUNetTrainer):
+class nnUNetTrainerSwinHR(nnUNetTrainer):
     def __init__(
         self,
         plans: dict,
@@ -28,5 +28,6 @@ class nnUNetTrainerHCMA(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = HCMA(num_input_channels, num_output_channels, predict_mode=True)
+        patch_size = tuple(int(s) for s in self.configuration_manager.patch_size)
+        model = SwinHR(img_size=patch_size, in_channels=num_input_channels, out_channels=num_output_channels)
         return model

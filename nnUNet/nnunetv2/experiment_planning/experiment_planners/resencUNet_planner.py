@@ -71,6 +71,7 @@ class ResEncUNetPlanner(ExperimentPlanner):
         # further down may be required.
         if len(spacing) == 3:
             initial_patch_size = [round(i) for i in tmp * (256 ** 3 / np.prod(tmp)) ** (1 / 3)]
+            
         elif len(spacing) == 2:
             initial_patch_size = [round(i) for i in tmp * (2048 ** 2 / np.prod(tmp)) ** (1 / 2)]
         else:

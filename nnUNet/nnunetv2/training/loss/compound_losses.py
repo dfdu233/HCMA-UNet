@@ -86,7 +86,8 @@ def misclassified_loss_function(prediction, label):
 
 
 def FRLoss(prediction, label):
-   
+    C = prediction.shape[1]
+
     positive_mask = label.squeeze(1) == 1  # (B, D, H, W)
 
     prediction_reshaped = prediction.permute(0, 2, 3, 4, 1)  # (B, D, H, W, C)

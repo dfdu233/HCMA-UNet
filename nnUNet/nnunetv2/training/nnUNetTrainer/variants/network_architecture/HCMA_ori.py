@@ -777,16 +777,18 @@ class AxialAttention3D(nn.Module):
             5-D tensor, (batch, channels, depth, height, width)
         """
         B, C, D, H, W = x.size()
+        
         pos_embed = self.pos_embed
-        target_d, target_h, target_w = processed.shape[2], processed.shape[3], processed.shape[4]
+        if self.axis == 'D' and pos_embed.shape[2] != D:
+            pos_embed = F.interpolate(pos_embed, size=(D, 1, 1), mode='trilinear', align_corners=False)
+        elif self.axis == 'H' and pos_embed.shape[3] != H:
+            pos_embed = F.interpolate(pos_embed, size=(1, H, 1), mode='trilinear', align_corners=False)
+        elif self.axis == 'W' and pos_embed.shape[4] != W:
+            pos_embed = F.interpolate(pos_embed, size=(1, 1, W), mode='trilinear', align_corners=False)
 
-        if self.axis == 'D' and pos_embed.shape[2] != target_d:
-            pos_embed = F.interpolate(pos_embed, size=(target_d, 1, 1), mode='trilinear', align_corners=False)
-        elif self.axis == 'H' and pos_embed.shape[3] != target_h:
-            pos_embed = F.interpolate(pos_embed, size=(1, target_h, 1), mode='trilinear', align_corners=False)
-        elif self.axis == 'W' and pos_embed.shape[4] != target_w:
-            pos_embed = F.interpolate(pos_embed, size=(1, 1, target_w), mode='trilinear', align_corners=False)
-
+        # print("x shape:", x.shape)
+        # print("processed shape:", processed.shape)
+        # print("pos_embed shape:", pos_embed.shape)
         Q = self.query_conv(processed) + pos_embed  # (B, q_k_dim, D, H, W) + pos_embed
         K = self.key_conv(processed) + pos_embed  # (B, q_k_dim, D, H, W) + pos_embed
         V = self.value_conv(processed)  # (B, in_dim, D, H, W)
@@ -1145,7 +1147,7 @@ class Down(nn.Module):
     ):
         super().__init__()
         assert num_conv >= 1, "num_conv must be greater than or equal to 1"
-        self.downsample_avg = nn.AvgPool3d(kernel_size=stride, stride=stride, ceil_mode=True)
+        self.downsample_avg = nn.AvgPool3d(stride)
         self.downsample_resnext = ResNeXtConv(in_channels, in_channels, stride=stride)
         self.tmamba=TriplaneMamba3DConcat(input_channels=in_channels,is_split=is_split,patch_ini=patch_size,is_slice_attention=is_slice_attention)
         # self.tmamba = MambaLayer(dim=in_channels)
@@ -1163,11 +1165,7 @@ class Down(nn.Module):
         )
 
     def forward(self, x):
-        x_avg = self.downsample_avg(x)
-        x_res = self.downsample_resnext(x)
-        if x_avg.shape[2:] != x_res.shape[2:]:
-            x_avg = F.interpolate(x_avg, size=x_res.shape[2:], mode='trilinear', align_corners=False)
-        x = x_avg + x_res
+        x = self.downsample_avg(x) + self.downsample_resnext(x)
         x = self.tmamba(x)
         x_down = x
         for extractor in self.extractor:
@@ -1220,10 +1218,6 @@ class Up(nn.Module):
     def forward(self, x_low, x_high):
         for extractor in self.extractor:
             x_low = extractor(x_low)
-
-        if x_low.shape[2:] != x_high.shape[2:]:
-            x_low = F.interpolate(x_low, size=x_high.shape[2:], mode='trilinear', align_corners=False)
-
         x = (
             torch.cat([x_high, x_low], dim=1)
             if self.fusion_mode == "cat"
@@ -1322,7 +1316,7 @@ class DenseConvDown(nn.Module):
             x = self.conv_list[2](torch.cat([x1, x2], dim=1))
         return x
 
-class HCMA(nn.Module):
+class HCMA_ori(nn.Module):
     def __init__(
         self,
         in_channels,
@@ -1378,6 +1372,7 @@ class HCMA(nn.Module):
             )
 
         for i in range(self.depth):
+            patch_ini*=strides[self.depth - i - 1][0]
             for j in range(3):
                 patch_ini[j]*=strides[self.depth - i - 1][0]
             self.decoders.append(

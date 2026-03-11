@@ -2,10 +2,10 @@ import torch
 from torch import nn
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.plans_handling.plans_handler import ConfigurationManager, PlansManager
-from nnunetv2.training.nnUNetTrainer.variants.network_architecture.HCMA import HCMA
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MedNeXt import MedNeXt
 import math
 
-class nnUNetTrainerHCMA(nnUNetTrainer):
+class nnUNetTrainerMedNeXt(nnUNetTrainer):
     def __init__(
         self,
         plans: dict,
@@ -28,5 +28,5 @@ class nnUNetTrainerHCMA(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = HCMA(num_input_channels, num_output_channels, predict_mode=True)
+        model = MedNeXt(in_channels=num_input_channels, n_channels=32, n_classes=num_output_channels, exp_r=[2, 3, 4, 4, 4, 4, 4, 3, 2], kernel_size=3, deep_supervision=False, do_res=True, do_res_up_down=True, block_counts=[2, 2, 2, 2, 2, 2, 2, 2, 2], predict_mode=True)
         return model

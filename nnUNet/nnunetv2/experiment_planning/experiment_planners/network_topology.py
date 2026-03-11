@@ -6,25 +6,63 @@ def get_shape_must_be_divisible_by(net_numpool_per_axis):
     return 2 ** np.array(net_numpool_per_axis)
 
 
+import numpy as np
+
 def pad_shape(shape, must_be_divisible_by):
     """
-    pads shape so that it is divisible by must_be_divisible_by
-    :param shape:
-    :param must_be_divisible_by:
-    :return:
+    Pads shape so that it is divisible by must_be_divisible_by,
+    and prints debug information to show the calculation step by step.
+
+    :param shape: list or tuple of int, original shape
+    :param must_be_divisible_by: int or list/tuple of ints, required divisibility
+    :return: np.array, padded shape
     """
-    if not isinstance(must_be_divisible_by, (tuple, list, np.ndarray)):
-        must_be_divisible_by = [must_be_divisible_by] * len(shape)
+    shape = np.array(shape, dtype=int)
+    
+    # Make must_be_divisible_by an array of same length
+    if not isinstance(must_be_divisible_by, (list, tuple, np.ndarray)):
+        must_be_divisible_by = np.array([must_be_divisible_by] * len(shape))
     else:
-        assert len(must_be_divisible_by) == len(shape)
+        must_be_divisible_by = np.array(must_be_divisible_by, dtype=int)
+        assert len(must_be_divisible_by) == len(shape), "must_be_divisible_by length mismatch"
+    
+    print("Original shape:           ", shape)
+    print("Must be divisible by:     ", must_be_divisible_by)
 
-    new_shp = [shape[i] + must_be_divisible_by[i] - shape[i] % must_be_divisible_by[i] for i in range(len(shape))]
+    # Calculate new shape
+    new_shape = ((shape + must_be_divisible_by - 1) // must_be_divisible_by) * must_be_divisible_by
 
+    print("Padded shape calculation:")
     for i in range(len(shape)):
-        if shape[i] % must_be_divisible_by[i] == 0:
-            new_shp[i] -= must_be_divisible_by[i]
-    new_shp = np.array(new_shp).astype(int)
-    return new_shp
+        pad_needed = new_shape[i] - shape[i]
+        print(f"  Axis {i}: original={shape[i]}, must_div={must_be_divisible_by[i]}, "
+              f"padded={new_shape[i]}, pad_added={pad_needed}")
+
+        # Double-check divisibility
+        if new_shape[i] % must_be_divisible_by[i] != 0:
+            print(f"  !!! ERROR: Axis {i} is still not divisible !!!")
+
+    return new_shape
+#
+# def pad_shape(shape, must_be_divisible_by):
+#     """
+#     pads shape so that it is divisible by must_be_divisible_by
+#     :param shape:
+#     :param must_be_divisible_by:
+#     :return:
+#     """
+#     if not isinstance(must_be_divisible_by, (tuple, list, np.ndarray)):
+#         must_be_divisible_by = [must_be_divisible_by] * len(shape)
+#     else:
+#         assert len(must_be_divisible_by) == len(shape)
+#
+#     new_shp = [shape[i] + must_be_divisible_by[i] - shape[i] % must_be_divisible_by[i] for i in range(len(shape))]
+#
+#     for i in range(len(shape)):
+#         if shape[i] % must_be_divisible_by[i] == 0:
+#             new_shp[i] -= must_be_divisible_by[i]
+#     new_shp = np.array(new_shp).astype(int)
+#     return new_shp
 
 
 def get_pool_and_conv_props(spacing, patch_size, min_feature_map_size, max_numpool):

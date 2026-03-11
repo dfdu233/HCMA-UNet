@@ -2,10 +2,10 @@ import torch
 from torch import nn
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.plans_handling.plans_handler import ConfigurationManager, PlansManager
-from nnunetv2.training.nnUNetTrainer.variants.network_architecture.HCMA import HCMA
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.unetrpp import UNETR_PP
 import math
 
-class nnUNetTrainerHCMA(nnUNetTrainer):
+class nnUNetTrainerunetrpp(nnUNetTrainer):
     def __init__(
         self,
         plans: dict,
@@ -28,5 +28,5 @@ class nnUNetTrainerHCMA(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = HCMA(num_input_channels, num_output_channels, predict_mode=True)
+        model = UNETR_PP(in_channels=num_input_channels, out_channels=num_output_channels, feature_size=16, hidden_size=256, num_heads=8, pos_embed="perceptron", norm_name="instance", dropout_rate=0.1, depths=[3, 3, 3, 3], dims=[32, 64, 128, 256, 512], conv_op=nn.Conv3d, do_ds=False, predict_mode=True)
         return model

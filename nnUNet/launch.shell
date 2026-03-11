@@ -1,0 +1,3 @@
+nnUNetv2_convert_MSD_dataset -i "/root/autodl-tmp/data/nnUNet_raw/Task05_Prostate" 
+nnUNetv2_convert_old_nnUNet_dataset -input_folder "/root/autodl-tmp/data/nnUNet_raw/Task05_Prostate" -output_dataset_name "Data"
+nnUNetv2_plan_and_preprocess -d 
