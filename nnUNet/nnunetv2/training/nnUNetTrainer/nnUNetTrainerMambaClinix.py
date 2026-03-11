@@ -23,15 +23,18 @@ class nnUNetTrainerMambaClinix(nnUNetTrainer):
         self.initial_lr = 1e-4
         self.weight_decay = 1e-5
 
-    @staticmethod
-    def build_network_architecture(plans_manager: PlansManager,
-                                   dataset_json,
-                                   configuration_manager: ConfigurationManager,
-                                   num_input_channels,
-                                   enable_deep_supervision: bool = False) -> nn.Module:
+    def build_network_architecture(
+        self,
+        architecture_class_name: str,
+        arch_init_kwargs: dict,
+        arch_init_kwargs_req_import: list[str] | tuple[str, ...],
+        num_input_channels: int,
+        num_output_channels: int,
+        enable_deep_supervision: bool = False,
+    ) -> nn.Module:
 
-        if len(configuration_manager.patch_size) == 3:
-            model = get_mambaclinix_3d_from_plans(plans_manager, dataset_json, configuration_manager,
+        if len(self.configuration_manager.patch_size) == 3:
+            model = get_mambaclinix_3d_from_plans(self.plans_manager, self.dataset_json, self.configuration_manager,
                                           num_input_channels, deep_supervision=enable_deep_supervision)
 
         else:

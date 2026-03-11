@@ -13,7 +13,7 @@ from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDice
 from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
 
 from typing import Union, Tuple, List
-from nnunetv2.training.nnUNetTrainer.variants.network_architecture.baselinev5 import Baselinev5
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.SingleBaselinev5 import SingleBaselinev5
 from nnunetv2.training.nnUNetTrainer.variants.network_architecture.UXNet import UXNET
 from nnunetv2.training.nnUNetTrainer.variants.network_architecture.moganet import MogaNet
 from nnunetv2.training.nnUNetTrainer.variants.network_architecture.SwinUNETRv2 import SwinUNETR

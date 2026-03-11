@@ -641,9 +641,9 @@ def get_mambaclinix_3d_from_plans(
     num_input_channels can differ depending on whether we do cascade. Its best to make this info available in the
     trainer rather than inferring it again from the plans here.
     """
-    num_stages = len(configuration_manager.conv_kernel_sizes)
+    num_stages = len(configuration_manager.pool_op_kernel_sizes)
 
-    dim = len(configuration_manager.conv_kernel_sizes[0])
+    dim = len(configuration_manager.pool_op_kernel_sizes[0])
     conv_op = convert_dim_to_conv_op(dim)
 
     label_manager = plans_manager.get_label_manager(dataset_json)
@@ -661,17 +661,16 @@ def get_mambaclinix_3d_from_plans(
     }
 
     conv_or_blocks_per_stage = {
-        'n_conv_per_stage': configuration_manager.n_conv_per_stage_encoder,
-        'n_conv_per_stage_decoder': configuration_manager.n_conv_per_stage_decoder
+        'n_conv_per_stage': configuration_manager.network_arch_init_kwargs.get('n_conv_per_stage', [2]*num_stages),
+        'n_conv_per_stage_decoder': configuration_manager.network_arch_init_kwargs.get('n_conv_per_stage_decoder', [2]*(num_stages-1))
     }
 
     model = network_class(
         input_channels=num_input_channels,
         n_stages=num_stages,
-        features_per_stage=[min(configuration_manager.UNet_base_num_features * 2 ** i,
-                                configuration_manager.unet_max_num_features) for i in range(num_stages)],
+        features_per_stage=configuration_manager.network_arch_init_kwargs['features_per_stage'],
         conv_op=conv_op,
-        kernel_sizes=configuration_manager.conv_kernel_sizes,
+        kernel_sizes=configuration_manager.network_arch_init_kwargs['kernel_sizes'],
         strides=configuration_manager.pool_op_kernel_sizes,
         num_classes=label_manager.num_segmentation_heads,
         deep_supervision=deep_supervision,

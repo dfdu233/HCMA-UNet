@@ -30,5 +30,6 @@ class nnUNetTrainerSwinUNETRv2(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = SwinUNETR(in_channels=num_input_channels, out_channels=num_output_channels, use_v2=False, predict_mode=True)
+        patch_size = tuple(int(s) for s in self.configuration_manager.patch_size)
+        model = SwinUNETR(img_size=patch_size, in_channels=num_input_channels, out_channels=num_output_channels, use_v2=False, predict_mode=True)
         return model

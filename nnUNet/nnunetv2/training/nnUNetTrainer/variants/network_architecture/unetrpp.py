@@ -1471,7 +1471,7 @@ class UNETR_PP(SegmentationNetwork):
         self.feat_size = (4, 4, 4,)
         self.hidden_size = hidden_size
 
-        self.unetr_pp_encoder = UnetrPPEncoder(dims=dims, depths=depths, num_heads=num_heads)
+        self.unetr_pp_encoder = UnetrPPEncoder(dims=dims, depths=depths, num_heads=num_heads, in_channels=in_channels)
 
         self.encoder1 = UnetResBlock(
             spatial_dims=3,

@@ -357,7 +357,9 @@ class SwinHR(nn.Module):
                 weights["state_dict"]["module.layers4.0.downsample.norm.bias"]
             )
 
-    def forward(self, x_in, x_attention):
+    def forward(self, x_in, x_attention=None):
+        if x_attention is None:
+            x_attention = x_in
 
         x0, x1, x2, x3, x4, x5 = self.swinViT_forward(x_in)
         x0_attention, x1_attention, x2_attention, x3_attention, x4_attention, x5_attention = self.swinViT_forward_attention(
