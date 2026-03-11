@@ -150,9 +150,9 @@ class nnUNetTrainer(object):
         self.initial_lr = 4e-4
         self.weight_decay = 5e-2
         self.oversample_foreground_percent = 0.33
-        self.num_iterations_per_epoch = 250
-        self.num_val_iterations_per_epoch = 50
-        self.num_epochs = 500
+        self.num_iterations_per_epoch = 50
+        self.num_val_iterations_per_epoch = 10
+        self.num_epochs = 100
         self.current_epoch = 0
         self.enable_deep_supervision = True
 
