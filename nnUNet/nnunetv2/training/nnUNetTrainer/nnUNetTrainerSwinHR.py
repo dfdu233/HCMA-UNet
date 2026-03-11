@@ -20,7 +20,7 @@ class nnUNetTrainerSwinHR(nnUNetTrainer):
         self.configuration_manager.configuration['patch_size'] = [64, 64, 64]
         self.configuration_manager.configuration['batch_size'] = 1
         self.enable_deep_supervision = False
-        self.num_epochs = 500
+        self.num_epochs = 100
         self.batch_size = 1
         self.enable_deep_supervision = False  # Custom models mostly don't support deep supervision directly here
 

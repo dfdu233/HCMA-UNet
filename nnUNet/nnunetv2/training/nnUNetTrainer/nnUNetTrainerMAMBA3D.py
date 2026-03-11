@@ -42,7 +42,7 @@ class nnUNetTrainerMAMBA3D(nnUNetTrainer):
             plans, configuration, fold, dataset_json, unpack_dataset, exp_name,device
         )
         self.enable_deep_supervision = False
-        self.num_epochs = 500
+        self.num_epochs = 100
         self.oversample_foreground_percent = 0.33
         self.num_iterations_per_epoch = 200
         self.batch_size = 2
