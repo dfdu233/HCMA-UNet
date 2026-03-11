@@ -13,9 +13,11 @@ class nnUNetTrainermoganet(nnUNetTrainer):
         fold: int,
         dataset_json: dict,
         unpack_dataset: bool = True,
+        exp_name: str = 'default',
         device: torch.device = torch.device('cuda')
     ):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
+        self.enable_deep_supervision = False
         self.num_epochs = 500
         self.enable_deep_supervision = False  # Custom models mostly don't support deep supervision directly here
 

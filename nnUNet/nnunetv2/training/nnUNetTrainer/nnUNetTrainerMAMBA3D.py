@@ -25,7 +25,7 @@ from nnunetv2.training.nnUNetTrainer.variants.network_architecture.unetrpp impor
 from nnunetv2.training.nnUNetTrainer.variants.network_architecture.nnFormer import nnFormer
 from nnunetv2.training.nnUNetTrainer.variants.network_architecture.HCMA_SvANet import HCMA_SvANet
 from nnunetv2.training.nnUNetTrainer.variants.network_architecture.HCMA_SvANet_v2 import HCMA_SvANet_v2
-from nnunetv2.training.nnUNetTrainer.variants.network_architecture.Mamba3d
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.Mamba3d import Mamba3d
 class nnUNetTrainerMAMBA3D(nnUNetTrainer):
     def __init__(
         self,
@@ -38,8 +38,10 @@ class nnUNetTrainerMAMBA3D(nnUNetTrainer):
         device: torch.device = torch.device("cuda"),
     ):
         super().__init__(
+
             plans, configuration, fold, dataset_json, unpack_dataset, exp_name,device
         )
+        self.enable_deep_supervision = False
         self.num_epochs = 500
         self.oversample_foreground_percent = 0.33
         self.num_iterations_per_epoch = 200

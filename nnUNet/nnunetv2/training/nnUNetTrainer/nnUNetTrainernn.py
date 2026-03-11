@@ -33,8 +33,10 @@ class nnUNetTrainernn(nnUNetTrainer):
         device: torch.device = torch.device("cuda"),
     ):
         super().__init__(
+
             plans, configuration, fold, dataset_json, unpack_dataset, exp_name,device
         )
+        self.enable_deep_supervision = False
         self.num_epochs = 400
         self.oversample_foreground_percent = 0.33
         self.num_iterations_per_epoch = 200
@@ -179,7 +181,7 @@ class nnUNetTrainernn(nnUNetTrainer):
                                    arch_init_kwargs_req_import: Union[List[str], Tuple[str, ...]],
                                    num_input_channels: int,
                                    num_output_channels: int,
-                                   enable_deep_supervision: bool = True) -> nn.Module:
+                                   enable_deep_supervision: bool = False) -> nn.Module:
         """
         This is where you build the architecture according to the plans. There is no obligation to use
         get_network_from_plans, this is just a utility we use for the nnU-Net default architectures. You can do what

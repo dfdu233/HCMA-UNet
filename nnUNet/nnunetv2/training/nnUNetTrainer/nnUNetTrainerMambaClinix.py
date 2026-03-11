@@ -1,4 +1,4 @@
- import torch
+import torch
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.plans_handling.plans_handler import ConfigurationManager, PlansManager
 from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MambaClinix_3d import get_mambaclinix_3d_from_plans
@@ -14,9 +14,11 @@ class nnUNetTrainerMambaClinix(nnUNetTrainer):
         fold: int,
         dataset_json: dict,
         unpack_dataset: bool = True,
+        exp_name: str = 'default',
         device: torch.device = torch.device('cuda')
     ):
-        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
+        self.enable_deep_supervision = False
 
         self.initial_lr = 1e-4
         self.weight_decay = 1e-5
@@ -26,7 +28,7 @@ class nnUNetTrainerMambaClinix(nnUNetTrainer):
                                    dataset_json,
                                    configuration_manager: ConfigurationManager,
                                    num_input_channels,
-                                   enable_deep_supervision: bool = True) -> nn.Module:
+                                   enable_deep_supervision: bool = False) -> nn.Module:
 
         if len(configuration_manager.patch_size) == 3:
             model = get_mambaclinix_3d_from_plans(plans_manager, dataset_json, configuration_manager,

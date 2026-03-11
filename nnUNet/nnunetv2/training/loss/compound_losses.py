@@ -316,7 +316,7 @@ class DC_and_CE_loss(nn.Module):
         self.dc = dice_class(apply_nonlin=softmax_helper_dim1, **soft_dice_kwargs)
 
     def forward(
-        self, feature: torch.Tensor, net_output: torch.Tensor, target: torch.Tensor
+        self, net_output: torch.Tensor, target: torch.Tensor, feature: torch.Tensor=None
     ):
         """
         target must be b, c, x, y(, z) with c=1
@@ -355,8 +355,11 @@ class DC_and_CE_loss(nn.Module):
         # mw=5
         # result = self.weight_ce * ce_loss + self.weight_dice * dc_loss +  mw * misclassified_loss
         # result = self.weight_ce * ce_loss + self.weight_dice * dc_loss + pw * positive_loss + mw * misclassified_loss
-        self_loss = FRLoss(feature, target)
-        result = self.weight_ce * ce_loss + self.weight_dice * dc_loss + 5 * self_loss
+        if feature is not None:
+            self_loss = FRLoss(feature, target)
+            result = self.weight_ce * ce_loss + self.weight_dice * dc_loss + 5 * self_loss
+        else:
+            result = self.weight_ce * ce_loss + self.weight_dice * dc_loss
         # result = self.weight_ce * ce_loss + self.weight_dice * dc_loss
         return result
 
