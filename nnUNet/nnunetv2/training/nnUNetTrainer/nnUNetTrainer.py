@@ -390,7 +390,6 @@ class nnUNetTrainer(object):
             self.oversample_foreground_percent = oversample_percent
 
     def _build_loss(self):
-        print(f"DEBUG: building loss with deep_supervision={self.enable_deep_supervision}")
         if self.label_manager.has_regions:
             loss = DC_and_BCE_loss({},
                                    {'batch_dice': self.configuration_manager.batch_dice,

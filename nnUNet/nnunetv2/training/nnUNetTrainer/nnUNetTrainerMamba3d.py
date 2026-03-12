@@ -19,6 +19,7 @@ class nnUNetTrainerMamba3d(nnUNetTrainer):
         device: torch.device = torch.device('cuda')
     ):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
+        self.configuration_manager.configuration['batch_size'] = 1
         self.enable_deep_supervision = False
         self.num_epochs = 100
         self.enable_deep_supervision = False  # Custom models mostly don't support deep supervision directly here
@@ -32,8 +33,12 @@ class nnUNetTrainerMamba3d(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = Mamba3d(in_channels=num_input_channels, n_classes=num_output_channels, predict_mode=False)
+        model = Mamba3d(in_channels=num_input_channels, n_classes=num_output_channels, predict_mode=True)
         return model
+
+    def _build_loss(self):
+        self.enable_deep_supervision = False
+        return super()._build_loss()
 
     def configure_optimizers(self):
         self.initial_lr = 1e-4

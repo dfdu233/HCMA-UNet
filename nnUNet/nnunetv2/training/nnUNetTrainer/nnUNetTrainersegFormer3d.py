@@ -19,6 +19,7 @@ class nnUNetTrainersegFormer3d(nnUNetTrainer):
         device: torch.device = torch.device('cuda')
     ):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
+        self.configuration_manager.configuration['batch_size'] = 1
         self.enable_deep_supervision = False
         self.num_epochs = 100
         self.enable_deep_supervision = False  # Custom models mostly don't support deep supervision directly here
@@ -41,3 +42,7 @@ class nnUNetTrainersegFormer3d(nnUNetTrainer):
         optimizer = AdamW(self.network.parameters(), lr=self.initial_lr, weight_decay=self.weight_decay, eps=1e-5)
         lr_scheduler = PolyLRScheduler(optimizer, self.initial_lr, self.num_epochs)
         return optimizer, lr_scheduler
+
+    def _build_loss(self):
+        self.enable_deep_supervision = False
+        return super()._build_loss()

@@ -17,6 +17,7 @@ class nnUNetTrainerSwinHR(nnUNetTrainer):
         device: torch.device = torch.device('cuda')
     ):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
+        self.configuration_manager.configuration['batch_size'] = 1
         self.enable_deep_supervision = False
         self.num_epochs = 100
         self.initial_lr = 1e-4
@@ -35,3 +36,7 @@ class nnUNetTrainerSwinHR(nnUNetTrainer):
         patch_size = tuple(int(s) for s in self.configuration_manager.patch_size)
         model = SwinHR(img_size=patch_size, in_channels=num_input_channels, out_channels=num_output_channels, depths=(1, 1, 1, 1), num_heads=(1, 2, 4, 8), use_checkpoint=True)
         return model
+
+    def _build_loss(self):
+        self.enable_deep_supervision = False
+        return super()._build_loss()
