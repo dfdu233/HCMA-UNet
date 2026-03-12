@@ -331,7 +331,7 @@ class SwinUNETR(nn.Module):
         if self.predict_mode:
             return logits
         else:
-            return out,logits
+            return logits
 
 
 def window_partition(x, window_size):

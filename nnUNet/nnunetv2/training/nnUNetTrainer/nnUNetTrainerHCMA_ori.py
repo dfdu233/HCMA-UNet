@@ -30,5 +30,5 @@ class nnUNetTrainerHCMA_ori(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = HCMA_ori(num_input_channels, num_output_channels, predict_mode=True)
+        model = HCMA_ori(num_input_channels, num_output_channels, predict_mode=False)
         return model

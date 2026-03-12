@@ -30,5 +30,5 @@ class nnUNetTrainerUXNet(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = UXNET(num_input_channels, num_output_channels, predict_mode=True)
+        model = UXNET(num_input_channels, num_output_channels, predict_mode=False)
         return model

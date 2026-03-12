@@ -30,5 +30,5 @@ class nnUNetTrainerHCMA_SvANet_v2(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = HCMA_SvANet_v2(num_input_channels, num_output_channels, predict_mode=True)
+        model = HCMA_SvANet_v2(num_input_channels, num_output_channels, predict_mode=False)
         return model

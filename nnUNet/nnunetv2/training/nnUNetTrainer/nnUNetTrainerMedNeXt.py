@@ -17,9 +17,11 @@ class nnUNetTrainerMedNeXt(nnUNetTrainer):
         device: torch.device = torch.device('cuda')
     ):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
+        self.initial_lr = 1e-4
         self.enable_deep_supervision = False
         self.num_epochs = 100
         self.enable_deep_supervision = False  # Custom models mostly don't support deep supervision directly here
+
 
     def build_network_architecture(
         self,
@@ -30,5 +32,5 @@ class nnUNetTrainerMedNeXt(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = MedNeXt(in_channels=num_input_channels, n_channels=32, n_classes=num_output_channels, exp_r=[2, 3, 4, 4, 4, 4, 4, 3, 2], kernel_size=3, deep_supervision=False, do_res=True, do_res_up_down=True, block_counts=[2, 2, 2, 2, 2, 2, 2, 2, 2], predict_mode=True)
+        model = MedNeXt(in_channels=num_input_channels, n_channels=32, n_classes=num_output_channels, exp_r=[2, 3, 4, 4, 4, 4, 4, 3, 2], kernel_size=3, deep_supervision=False, do_res=True, do_res_up_down=True, block_counts=[2, 2, 2, 2, 2, 2, 2, 2, 2], predict_mode=False)
         return model

@@ -1,5 +1,7 @@
 import torch
 from torch import nn
+from torch.optim import AdamW
+from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.utilities.plans_handling.plans_handler import ConfigurationManager, PlansManager
 from nnunetv2.training.nnUNetTrainer.variants.network_architecture.SingleBaselinev5 import SingleBaselinev5
@@ -30,5 +32,12 @@ class nnUNetTrainerSingleBaselinev5(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = SingleBaselinev5(in_channels=num_input_channels, n_classes=num_output_channels, predict_mode=True)
+        model = SingleBaselinev5(in_channels=num_input_channels, n_classes=num_output_channels, predict_mode=False)
         return model
+
+    def configure_optimizers(self):
+        self.initial_lr = 1e-4
+        self.weight_decay = 1e-5
+        optimizer = AdamW(self.network.parameters(), lr=self.initial_lr, weight_decay=self.weight_decay, eps=1e-5)
+        lr_scheduler = PolyLRScheduler(optimizer, self.initial_lr, self.num_epochs)
+        return optimizer, lr_scheduler

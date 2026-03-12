@@ -32,7 +32,7 @@ class nnUNetTrainerMamba3d(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = Mamba3d(in_channels=num_input_channels, n_classes=num_output_channels, predict_mode=True)
+        model = Mamba3d(in_channels=num_input_channels, n_classes=num_output_channels, predict_mode=False)
         return model
 
     def configure_optimizers(self):

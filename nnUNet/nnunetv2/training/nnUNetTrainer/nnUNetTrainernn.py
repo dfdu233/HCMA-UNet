@@ -40,10 +40,10 @@ class nnUNetTrainernn(nnUNetTrainer):
         self.num_epochs = 100
         self.oversample_foreground_percent = 0.33
         self.num_iterations_per_epoch = 200
-        self.batch_size = 2
-        self.initial_lr = 4e-4
+        self.initial_lr = 1e-4
         self.weight_decay = 5e-2
         self.enable_deep_supervision = False  # True
+
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(

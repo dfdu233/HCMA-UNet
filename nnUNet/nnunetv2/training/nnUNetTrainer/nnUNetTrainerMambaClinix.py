@@ -20,9 +20,6 @@ class nnUNetTrainerMambaClinix(nnUNetTrainer):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
         self.enable_deep_supervision = False
 
-        self.initial_lr = 1e-4
-        self.weight_decay = 1e-5
-
     def build_network_architecture(
         self,
         architecture_class_name: str,

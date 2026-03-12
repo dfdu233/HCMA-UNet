@@ -30,5 +30,5 @@ class nnUNetTrainerAttentionUnet(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = AttentionUnet(3, in_channels=num_input_channels, out_channels=num_output_channels, channels=[32, 64, 128, 256, 512], strides=[2, 2, 2, 2], predict_mode=True)
+        model = AttentionUnet(3, in_channels=num_input_channels, out_channels=num_output_channels, channels=[32, 64, 128, 256, 512], strides=[2, 2, 2, 2], predict_mode=False)
         return model

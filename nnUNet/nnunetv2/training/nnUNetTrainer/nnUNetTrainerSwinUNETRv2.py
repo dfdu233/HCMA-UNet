@@ -17,9 +17,12 @@ class nnUNetTrainerSwinUNETRv2(nnUNetTrainer):
         device: torch.device = torch.device('cuda')
     ):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
+        print("DEBUG: SwinUNETRv2 init hit!")
+        self.initial_lr = 1e-4
         self.enable_deep_supervision = False
         self.num_epochs = 100
         self.enable_deep_supervision = False  # Custom models mostly don't support deep supervision directly here
+
 
     def build_network_architecture(
         self,
@@ -31,5 +34,5 @@ class nnUNetTrainerSwinUNETRv2(nnUNetTrainer):
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
         patch_size = tuple(int(s) for s in self.configuration_manager.patch_size)
-        model = SwinUNETR(img_size=patch_size, in_channels=num_input_channels, out_channels=num_output_channels, use_v2=False, predict_mode=True)
+        model = SwinUNETR(img_size=patch_size, in_channels=num_input_channels, out_channels=num_output_channels, use_v2=False, predict_mode=False, use_checkpoint=True)
         return model

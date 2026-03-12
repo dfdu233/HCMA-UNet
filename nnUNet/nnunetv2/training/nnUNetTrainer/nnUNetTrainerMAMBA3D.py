@@ -224,17 +224,17 @@ class nnUNetTrainerMAMBA3D(nnUNetTrainer):
         the number of outputs is != the number of classes. Also there is the ignore label for which no output
         should be generated. label_manager takes care of all that for you.)
         """
-       #model = Baselinev5_DenseDown(in_channels=1,n_classes=2,predict_mode=True)
+       #model = Baselinev5_DenseDown(in_channels=1,n_classes=2,predict_mode=False)
         # model = Baselinev5(
         #     num_input_channels,
         #     num_output_channels,
         #     deep_supervision=enable_deep_supervision,
         # )
         # model = FrigeSelfAxialMamba(num_input_channels,2,predict_mode=False)
-        # model = HCMA(num_input_channels,2,predict_mode=True)
+        # model = HCMA(num_input_channels,2,predict_mode=False)
         #model = AxialMamba(num_input_channels,2,predict_mode=False)
-        # model = SingleBaselinev5(num_input_channels,2,predict_mode=True)
-        # model = SingleMamba(num_input_channels,2,predict_mode=True)
+        # model = SingleBaselinev5(num_input_channels,2,predict_mode=False)
+        # model = SingleMamba(num_input_channels,2,predict_mode=False)
         # model = DifferentPatch(num_input_channels,2,predict_mode=False)
         # model = nnFormer(input_channels=num_input_channels,num_classes=num_output_channels)
         # model = Baselinev5_DenseDown(
@@ -261,7 +261,7 @@ class nnUNetTrainerMAMBA3D(nnUNetTrainer):
         #         dims=[32, 64, 128, 256,512],
         #         conv_op=nn.Conv3d,
         #         do_ds=False,
-        #         predict_mode=True
+        #         predict_mode=False
         #     )
 
         # model=MedNeXt(
@@ -274,11 +274,11 @@ class nnUNetTrainerMAMBA3D(nnUNetTrainer):
         # do_res=True,
         # do_res_up_down=True,
         # block_counts=[2, 2, 2, 2, 2, 2, 2, 2, 2],
-        # predict_mode=True
+        # predict_mode=False
         # )
-   #     model = HCMA(num_input_channels, num_output_channels, predict_mode=True)
-     #   model = HCMA_SvANet_v2(num_input_channels, num_output_channels, predict_mode=True)
-#        model = HCMA_SvANet(num_input_channels, num_output_channels, predict_mode=True)
+   #     model = HCMA(num_input_channels, num_output_channels, predict_mode=False)
+     #   model = HCMA_SvANet_v2(num_input_channels, num_output_channels, predict_mode=False)
+#        model = HCMA_SvANet(num_input_channels, num_output_channels, predict_mode=False)
         
         # model = UNETR(num_input_channels, num_output_channels, img_size=(128, 128, 128))
 
@@ -288,14 +288,14 @@ class nnUNetTrainerMAMBA3D(nnUNetTrainer):
         #     in_channels=num_input_channels,
         #     out_channels=num_output_channels,
         #     use_v2=False,
-        #     predict_mode=True
+        #     predict_mode=False
         # )
         patch_size = tuple(int(s) for s in self.configuration_manager.patch_size)
         print(patch_size)
         # model = HCMA_ori(
         #     num_input_channels,
         #     num_output_channels,
-        #     predict_mode=True,
+        #     predict_mode=False,
         # )
 
 
@@ -305,14 +305,14 @@ class nnUNetTrainerMAMBA3D(nnUNetTrainer):
         #     out_channels=num_output_channels,
         #     channels=[32, 64, 128, 256, 512],
         #     strides=[2, 2, 2, 2],
-        #     predict_mode=True
+        #     predict_mode=False
         # )
 
         # model = UXNET(
         #     num_input_channels,
         #     num_output_channels,
         #     # deep_supervision=enable_deep_supervision,
-        #     predict_mode=True
+        #     predict_mode=False
         # )
         return model
 

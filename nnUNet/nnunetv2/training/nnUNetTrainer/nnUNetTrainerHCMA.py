@@ -30,5 +30,5 @@ class nnUNetTrainerHCMA(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = HCMA(num_input_channels, num_output_channels, predict_mode=True)
+        model = HCMA(num_input_channels, num_output_channels, predict_mode=False)
         return model
