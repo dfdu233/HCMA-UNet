@@ -18,7 +18,7 @@ class nnUNetTrainerHCMA(nnUNetTrainer):
     ):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
         self.enable_deep_supervision = False
-        self.num_epochs = 100
+        self.num_epochs = 200
         self.enable_deep_supervision = False  # Custom models mostly don't support deep supervision directly here
 
     def build_network_architecture(

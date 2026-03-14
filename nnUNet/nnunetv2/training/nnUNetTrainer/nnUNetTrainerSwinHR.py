@@ -19,7 +19,7 @@ class nnUNetTrainerSwinHR(nnUNetTrainer):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
         self.configuration_manager.configuration['batch_size'] = 1
         self.enable_deep_supervision = False
-        self.num_epochs = 100
+        self.num_epochs = 200
         self.initial_lr = 1e-4
         self.enable_deep_supervision = False  # Custom models mostly don't support deep supervision directly here
 
