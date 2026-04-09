@@ -233,11 +233,18 @@ class UnetrPPEncoder(nn.Module):
                  dropout=0.0, transformer_dropout_rate=0.1 ,**kwargs):
         super().__init__()
 
+        # GroupNorm requires channels % num_groups == 0.
+        # Some datasets have input modalities that do not divide dims[0] (for example 3 into 32),
+        # so we select the largest valid group count <= in_channels.
+        stem_groups = min(int(in_channels), int(dims[0]))
+        while stem_groups > 1 and (int(dims[0]) % stem_groups != 0):
+            stem_groups -= 1
+
         self.downsample_layers = nn.ModuleList()  # stem and 3 intermediate downsampling conv layers
         stem_layer = nn.Sequential(
             get_conv_layer(spatial_dims, in_channels, dims[0], kernel_size=(4, 4, 4), stride=(4, 4, 4),
                            dropout=dropout, conv_only=True, ),
-            get_norm_layer(name=("group", {"num_groups": in_channels}), channels=dims[0]),
+            get_norm_layer(name=("group", {"num_groups": stem_groups}), channels=dims[0]),
         )
         self.downsample_layers.append(stem_layer)
         for i in range(3):

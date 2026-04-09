@@ -26,13 +26,6 @@ from functools import partial
 from typing import Optional, Callable
 DropPath.__repr__ = lambda self: f"timm.DropPath({self.drop_prob})"
 
-
-def _sanitize_tensor(x: torch.Tensor, clamp_val: float = 1e4) -> torch.Tensor:
-    if not torch.is_floating_point(x):
-        return x
-    x = torch.nan_to_num(x, nan=0.0, posinf=clamp_val, neginf=-clamp_val)
-    return x.clamp(min=-clamp_val, max=clamp_val)
-
 # import mamba_ssm.selective_scan_fn (in which causal_conv1d is needed)
 try:
     from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, selective_scan_ref
@@ -495,15 +488,7 @@ class SS2D(nn.Module):
         z = z.permute(0, 2, 3, 1).contiguous()
 
         x = x.permute(0, 3, 1, 2).contiguous()
-        # Read layers from module registry first. This is more robust than
-        # direct attribute access when custom ops/runtime state causes
-        # intermittent nn.Module __getattr__ issues during validation TTA.
-        conv2d = self.__dict__.get('_modules', {}).get('conv2d', None)
-        act = self.__dict__.get('_modules', {}).get('act', None)
-        if conv2d is None or act is None:
-            conv2d = self.conv2d
-            act = self.act
-        x = act(conv2d(x)) # (b, d, h, w)
+        x = self.act(self.conv2d(x)) # (b, d, h, w)
 
         y = self.forward_core(x, layer)
 
@@ -533,12 +518,12 @@ class VSSBlock(nn.Module):
         self.up = nn.Linear(d_model, hidden_dim)
         self.ln_1 = norm_layer(d_model)
         self.self_attention = SS2D(d_model=d_model, dropout=attn_drop_rate, d_state=d_state,d_conv=3, **kwargs)
-        self.stochastic_depth = DropPath(drop_path)
-        self.layer_id = layer
+        self.drop_path = DropPath(drop_path)
+        self.layer = layer
         
     def forward(self, input: torch.Tensor):
         input_x = self.down(input)
-        input_x = input_x + self.stochastic_depth(self.self_attention(self.ln_1(input_x), self.layer_id))
+        input_x = input_x + self.drop_path(self.self_attention(self.ln_1(input_x), self.layer))
         x = self.up(input_x) + input
         return x
 class LayerNormBatchFirst(nn.Module):
@@ -671,17 +656,9 @@ class MultiHeadAxialAttention3D(nn.Module):
     def forward(self, x, processed):
         B, C, D, H, W = x.size()
         
-        pos_embed = self.pos_embed
-        if self.axis == 'D' and pos_embed.shape[2] != D:
-            pos_embed = F.interpolate(pos_embed, size=(D, 1, 1), mode='trilinear', align_corners=False)
-        elif self.axis == 'H' and pos_embed.shape[3] != H:
-            pos_embed = F.interpolate(pos_embed, size=(1, H, 1), mode='trilinear', align_corners=False)
-        elif self.axis == 'W' and pos_embed.shape[4] != W:
-            pos_embed = F.interpolate(pos_embed, size=(1, 1, W), mode='trilinear', align_corners=False)
-
-        Q = _sanitize_tensor(self.query_conv(x) + pos_embed)
-        K = _sanitize_tensor(self.key_conv(processed) + pos_embed)
-        V = _sanitize_tensor(self.value_conv(processed))
+        Q = self.query_conv(x) + self.pos_embed
+        K = self.key_conv(processed) + self.pos_embed
+        V = self.value_conv(processed)
 
         Q = Q.view(B, self.num_heads, self.head_dim, D, H, W)
         K = K.view(B, self.num_heads, self.head_dim, D, H, W)
@@ -699,10 +676,10 @@ class MultiHeadAxialAttention3D(nn.Module):
             V = V.permute(0, 1, 4, 5, 3, 2).contiguous()  # (B, num_heads, H, W, D, head_dim)
             V = V.view(B*self.num_heads*H*W, D, self.in_dim//self.num_heads)
             
-            attn = torch.bmm(Q.float(), K.float()) / scale
+            attn = torch.bmm(Q, K) / scale
             attn = self.softmax(attn)
-
-            out = torch.bmm(attn, V.float())
+            
+            out = torch.bmm(attn, V)
             out = out.view(B, self.num_heads, H, W, D, self.in_dim//self.num_heads)
             out = out.permute(0, 1, 5, 4, 2, 3).contiguous()
             
@@ -716,10 +693,10 @@ class MultiHeadAxialAttention3D(nn.Module):
             V = V.permute(0, 1, 3, 5, 4, 2).contiguous()  # (B, num_heads, D, W, H, head_dim)
             V = V.view(B*self.num_heads*D*W, H, self.in_dim//self.num_heads)
             
-            attn = torch.bmm(Q.float(), K.float()) / scale
+            attn = torch.bmm(Q, K) / scale
             attn = self.softmax(attn)
-
-            out = torch.bmm(attn, V.float())
+            
+            out = torch.bmm(attn, V)
             out = out.view(B, self.num_heads, D, W, H, self.in_dim//self.num_heads)
             out = out.permute(0, 1, 5, 2, 4, 3).contiguous()
             
@@ -733,19 +710,19 @@ class MultiHeadAxialAttention3D(nn.Module):
             V = V.permute(0, 1, 3, 4, 5, 2).contiguous()  # (B, num_heads, D, H, W, head_dim)
             V = V.view(B*self.num_heads*D*H, W, self.in_dim//self.num_heads)
             
-            attn = torch.bmm(Q.float(), K.float()) / scale
+            attn = torch.bmm(Q, K) / scale
             attn = self.softmax(attn)
-
-            out = torch.bmm(attn, V.float())
+            
+            out = torch.bmm(attn, V)
             out = out.view(B, self.num_heads, D, H, W, self.in_dim//self.num_heads)
             out = out.permute(0, 1, 5, 2, 3, 4).contiguous()
         
         # 合并多头
-        out = _sanitize_tensor(out.view(B, C, D, H, W))
+        out = out.view(B, C, D, H, W)
         
         # 残差连接
         gamma = torch.sigmoid(self.gamma)
-        out = _sanitize_tensor(gamma * out + (1-gamma) * x)
+        out = gamma * out + (1-gamma) * x
         return out
 
 class AxialAttention3D(nn.Module):
@@ -781,7 +758,7 @@ class AxialAttention3D(nn.Module):
             raise ValueError("Axis must be one of 'D', 'H', or 'W'.")
         
         nn.init.xavier_uniform_(self.pos_embed)
-        self.softmax_layer = Softmax(dim=-1)
+        self.softmax = Softmax(dim=-1)
         self.gamma = nn.Parameter(torch.zeros(1))
         
     def forward(self, x,processed):
@@ -793,81 +770,67 @@ class AxialAttention3D(nn.Module):
         """
         B, C, D, H, W = x.size()
         
-        pos_embed = self.pos_embed
-        if self.axis == 'D' and pos_embed.shape[2] != D:
-            pos_embed = F.interpolate(pos_embed, size=(D, 1, 1), mode='trilinear', align_corners=False)
-        elif self.axis == 'H' and pos_embed.shape[3] != H:
-            pos_embed = F.interpolate(pos_embed, size=(1, H, 1), mode='trilinear', align_corners=False)
-        elif self.axis == 'W' and pos_embed.shape[4] != W:
-            pos_embed = F.interpolate(pos_embed, size=(1, 1, W), mode='trilinear', align_corners=False)
-
-        # print("x shape:", x.shape)
-        # print("processed shape:", processed.shape)
-        # print("pos_embed shape:", pos_embed.shape)
-        Q = _sanitize_tensor(self.query_conv(processed) + pos_embed)  # (B, q_k_dim, D, H, W) + pos_embed
-        K = _sanitize_tensor(self.key_conv(processed) + pos_embed)  # (B, q_k_dim, D, H, W) + pos_embed
-        V = _sanitize_tensor(self.value_conv(processed))  # (B, in_dim, D, H, W)
+        Q = self.query_conv(processed) + self.pos_embed  # (B, q_k_dim, D, H, W) + pos_embed
+        K = self.key_conv(processed) + self.pos_embed  # (B, q_k_dim, D, H, W) + pos_embed
+        V = self.value_conv(processed)  # (B, in_dim, D, H, W)
         # Q = self.query_conv(x)  # (B, q_k_dim, D, H, W)
         # K = self.key_conv(x)   # (B, q_k_dim, D, H, W)
         # V = self.value_conv(x)  # (B, in_dim, D, H, W)
-        # Use runtime tensor channel sizes for reshape safety if attributes are accidentally overwritten.
-        qk_dim = int(Q.shape[1])
-        v_dim = int(V.shape[1])
-        scale = math.sqrt(qk_dim)
+        scale = math.sqrt(self.q_k_dim)
         if self.axis == 'D':
             Q = Q.permute(0, 3, 4, 2, 1).contiguous()  # (B, H, W, D, q_k_dim)
-            Q = Q.reshape(B * H * W, D, qk_dim)  # (B*H*W, D, q_k_dim)
+            Q = Q.view(B*H*W, D, self.q_k_dim)  # (B*H*W, D, q_k_dim)
             
             K = K.permute(0, 3, 4, 1, 2).contiguous()  # (B, H, W, q_k_dim, D)
-            K = K.reshape(B * H * W, qk_dim, D)  # (B*H*W, q_k_dim, D)
+            K = K.view(B*H*W, self.q_k_dim, D)  # (B*H*W, q_k_dim, D)
             
             V = V.permute(0, 3, 4, 2, 1).contiguous()  # (B, H, W, D, in_dim)
-            V = V.reshape(B * H * W, D, v_dim)  # (B*H*W, D, in_dim)
+            V = V.view(B*H*W, D, self.in_dim)  # (B*H*W, D, in_dim)
             
-            attn = torch.bmm(Q.float(), K.float()) / scale # (B*H*W, D, D)
-            attn = self.softmax_layer(attn)
+            attn = torch.bmm(Q, K) / scale # (B*H*W, D, D)
+            attn = self.softmax(attn)
+            
+            out = torch.bmm(attn, V)  # (B*H*W, D, in_dim)
 
-            out = torch.bmm(attn, V.float())  # (B*H*W, D, in_dim)
-
-            out = out.reshape(B, H, W, D, v_dim)
+            out = out.view(B, H, W, D, self.in_dim)
             out = out.permute(0, 4, 3, 1, 2).contiguous()  # (B, C, D, H, W)
             
         elif self.axis == 'H':
             Q = Q.permute(0, 2, 4, 3, 1).contiguous()  # (B, D, W, H, q_k_dim)
-            Q = Q.reshape(B * D * W, H, qk_dim)  # (B*D*W, H, q_k_dim)
+            Q = Q.view(B*D*W, H, self.q_k_dim)  # (B*D*W, H, q_k_dim)
             
             K = K.permute(0, 2, 4, 1, 3).contiguous()  # (B, D, W, q_k_dim, H)
-            K = K.reshape(B * D * W, qk_dim, H)  # (B*D*W, q_k_dim, H)
+            K = K.view(B*D*W, self.q_k_dim, H)  # (B*D*W, q_k_dim, H)
             
             V = V.permute(0, 2, 4, 3, 1).contiguous()  # (B, D, W, H, in_dim)
-            V = V.reshape(B * D * W, H, v_dim)  # (B*D*W, H, in_dim)
+            V = V.view(B*D*W, H, self.in_dim)  # (B*D*W, H, in_dim)
             
-            attn = torch.bmm(Q.float(), K.float()) / scale # (B*D*W, H, H)
-            attn = self.softmax_layer(attn)
-
-            out = torch.bmm(attn, V.float())  # (B*D*W, H, in_dim)
-            out = out.reshape(B, D, W, H, v_dim)
+            attn = torch.bmm(Q, K) / scale # (B*D*W, H, H)
+            attn = self.softmax(attn)
+            
+            out = torch.bmm(attn, V)  # (B*D*W, H, in_dim)
+            out = out.view(B, D, W, H, self.in_dim)
             out = out.permute(0, 4, 1, 3, 2).contiguous()  # (B, C, D, H, W)
             
         else:  # self.axis == 'W'
             Q = Q.permute(0, 2, 3, 4, 1).contiguous()  # (B, D, H, W, q_k_dim)
-            Q = Q.reshape(B * D * H, W, qk_dim)  # (B*D*H, W, q_k_dim)
+            Q = Q.view(B*D*H, W, self.q_k_dim)  # (B*D*H, W, q_k_dim)
             
             K = K.permute(0, 2, 3, 1, 4).contiguous()  # (B, D, H, q_k_dim, W)
-            K = K.reshape(B * D * H, qk_dim, W)  # (B*D*H, q_k_dim, W)
+            K = K.view(B*D*H, self.q_k_dim, W)  # (B*D*H, q_k_dim, W)
             
             V = V.permute(0, 2, 3, 4, 1).contiguous()  # (B, D, H, W, in_dim)
-            V = V.reshape(B * D * H, W, v_dim)  # (B*D*H, W, in_dim)
+            V = V.view(B*D*H, W, self.in_dim)  # (B*D*H, W, in_dim)
             
-            attn = torch.bmm(Q.float(), K.float()) / scale # (B*D*H, W, W)
-            attn = self.softmax_layer(attn)
-
-            out = torch.bmm(attn, V.float())  # (B*D*H, W, in_dim)
-            out = out.reshape(B, D, H, W, v_dim)
+            attn = torch.bmm(Q, K) / scale # (B*D*H, W, W)
+            attn = self.softmax(attn)
+            
+            out = torch.bmm(attn, V)  # (B*D*H, W, in_dim)
+            out = out.view(B, D, H, W, self.in_dim)
             out = out.permute(0, 4, 1, 2, 3).contiguous()  # (B, C, D, H, W)
         
         gamma = torch.sigmoid(self.gamma)
-        out = _sanitize_tensor(gamma * out + (1-gamma) * x)
+        out = gamma * out + (1-gamma) * x
         return out
 
 
@@ -905,7 +868,7 @@ class DirectionalMamba(nn.Module):
             B, L = x_mamba.shape[:2]
             x_mamba = x_mamba.reshape(B * L, *x_mamba.shape[2:])
             
-            processed = _sanitize_tensor(self.mamba(x_mamba))
+            processed = self.mamba(x_mamba)
             
             processed = processed.reshape(B, L, *processed.shape[1:])
             processed = processed.permute(*from_mamba)  # [B, C, D, H, W]
@@ -913,13 +876,13 @@ class DirectionalMamba(nn.Module):
             x_mamba = x.permute(*to_mamba)  # [B, L, *, *, C]，L是处理维度(D/H/W)
             B, L = x_mamba.shape[:2]
             x_mamba = x_mamba.reshape(B * L, x_mamba.shape[-1],*x_mamba.shape[2:-1])
-            processed = _sanitize_tensor(self.mamba(x_mamba))
+            processed = self.mamba(x_mamba)
              
 
         if isinstance(self.slice_attention, nn.Identity):
             return processed
         else:
-            attn_result = _sanitize_tensor(self.slice_attention(x,processed))
+            attn_result = self.slice_attention(x,processed)
             return attn_result
 def shuffle_channels_3d(x: torch.Tensor, groups: int) -> torch.Tensor:
     """
@@ -1036,30 +999,36 @@ class ResNeXtConv(nn.Module):
     ):
         super().__init__()
         self.stride = stride
-        self.conv0 = nn.Sequential(
-            nn.Conv3d(in_channels, in_channels * expand_rate, 1, 1, 0),
-            nn.InstanceNorm3d(in_channels * expand_rate, affine=True),
-            nn.LeakyReLU(inplace=True),
+        self.conv_list = nn.ModuleList()
+
+        self.conv_list.append(
+            nn.Sequential(
+                nn.Conv3d(in_channels, in_channels * expand_rate, 1, 1, 0),
+                nn.InstanceNorm3d(in_channels * expand_rate, affine=True),
+                nn.LeakyReLU(inplace=True),
+            )
         )
-        self.conv1 = nn.Sequential(
-            nn.Conv3d(
-                in_channels * expand_rate,
-                in_channels * expand_rate,
-                kernel_size,
-                stride,
-                kernel_size//2,
-                groups=in_channels,
-            ),
-            nn.InstanceNorm3d(in_channels * expand_rate, affine=True),
-            nn.LeakyReLU(inplace=True),
+        self.conv_list.append(
+            nn.Sequential(
+                nn.Conv3d(
+                    in_channels * expand_rate,
+                    in_channels * expand_rate,
+                    kernel_size,
+                    stride,
+                    kernel_size//2,
+                    groups=in_channels,
+                ),
+                nn.InstanceNorm3d(in_channels * expand_rate, affine=True),
+                nn.LeakyReLU(inplace=True),
+            )
         )
-        self.conv2 = nn.Sequential(
-            nn.Conv3d(in_channels * expand_rate, out_channels, 1, 1, 0),
-            nn.InstanceNorm3d(out_channels, affine=True),
-            nn.LeakyReLU(inplace=True),
+        self.conv_list.append(
+            nn.Sequential(
+                nn.Conv3d(in_channels * expand_rate, out_channels, 1, 1, 0),
+                nn.InstanceNorm3d(out_channels, affine=True),
+                nn.LeakyReLU(inplace=True),
+            )
         )
-        # Keep a read-only compatibility view for any debug/introspection code.
-        self.conv_list = (self.conv0, self.conv1, self.conv2)
 
         self.residual = in_channels == out_channels
         self.act = nn.LeakyReLU(inplace=True)
@@ -1071,45 +1040,11 @@ class ResNeXtConv(nn.Module):
 
     def forward(self, x):
         res = x
-        x = self.conv0(x)
-        x = self.conv1(x)
-        x = self.conv2(x)
+        x = self.conv_list[0](x)
+        x = self.conv_list[1](x)
+        x = self.conv_list[2](x)
         x = x + res if self.residual and self.stride == 1 else x
-        return _sanitize_tensor(x)
-
-    def _load_from_state_dict(
-        self,
-        state_dict,
-        prefix,
-        local_metadata,
-        strict,
-        missing_keys,
-        unexpected_keys,
-        error_msgs,
-    ):
-        # Backward compatibility: old checkpoints use conv_list.{0,1,2}.*
-        # while current model uses conv{0,1,2}.*
-        for i in range(3):
-            old_prefix = f"{prefix}conv_list.{i}."
-            new_prefix = f"{prefix}conv{i}."
-            old_keys = [k for k in list(state_dict.keys()) if k.startswith(old_prefix)]
-            for old_key in old_keys:
-                suffix = old_key[len(old_prefix):]
-                new_key = new_prefix + suffix
-                if new_key not in state_dict:
-                    state_dict[new_key] = state_dict[old_key]
-                # Remove legacy key so strict=True won't report it as unexpected.
-                state_dict.pop(old_key, None)
-
-        super()._load_from_state_dict(
-            state_dict,
-            prefix,
-            local_metadata,
-            strict,
-            missing_keys,
-            unexpected_keys,
-            error_msgs,
-        )
+        return x
 
 
 
@@ -1155,7 +1090,9 @@ class DenseConv(nn.Module):
         self.dp_1 = nn.Dropout(dropout_rate)
         self.dp_2 = nn.Dropout(dropout_rate * 2)
         self.residual = in_channels == out_channels
-        self.drop_path = DropPath(drop_path_rate) if self.residual and drop_path_rate > 0.0 else nn.Identity()
+        self.drop_path = (
+            True if torch.rand(1) < drop_path_rate and self.training else False
+        )
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
@@ -1163,40 +1100,19 @@ class DenseConv(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        # res = x
-        # if self.drop_path and self.residual:
-        #     return res
-        # x1 = self.conv_list[0](x)
-        # x1 = self.dp_1(x1)
-        # x2 = self.conv_list[1](torch.cat([x, x1], dim=1))
-        # x2 = self.dp_2(x2)
-        # x = (
-        #     self.conv_list[2](torch.cat([x, x1, x2], dim=1)) + res
-        #     if self.residual
-        #     else self.conv_list[2](torch.cat([x, x1, x2], dim=1))
-        # )
-        # return x
         res = x
-        
-        # 🚀 改造 2：按步执行，避免在 if-else 表达式中发生跨进程的参数错乱
+        if self.drop_path and self.residual:
+            return res
         x1 = self.conv_list[0](x)
         x1 = self.dp_1(x1)
-        
         x2 = self.conv_list[1](torch.cat([x, x1], dim=1))
         x2 = self.dp_2(x2)
-        
-        # 拼接 3 个特征
-        combined_feat = torch.cat([x, x1, x2], dim=1)
-        out = self.conv_list[2](combined_feat)
-        
-        # 🚀 改造 3：应用残差与 DropPath
-        if self.residual:
-            # 训练时按概率丢弃，推理时自动变为恒等映射（Identity）
-            x = self.drop_path(out) + res
-        else:
-            x = out
-            
-        return _sanitize_tensor(x)
+        x = (
+            self.conv_list[2](torch.cat([x, x1, x2], dim=1)) + res
+            if self.residual
+            else self.conv_list[2](torch.cat([x, x1, x2], dim=1))
+        )
+        return x
 class Down(nn.Module):
     def __init__(
         self,
@@ -1386,7 +1302,6 @@ class HCMA(nn.Module):
         self,
         in_channels,
         n_classes,
-        patch_ini=[64, 192, 128],
         depth=4,
         conv=DenseConv,
         channels=[2**i for i in range(5, 10)],
@@ -1417,8 +1332,7 @@ class HCMA(nn.Module):
         self.decoders = nn.ModuleList()  # 
         self.skips = nn.ModuleList()  # 
         self.encoders.append(DenseConv(in_channels, channels[0]))
-        # patch_ini is now passed as an argument
-        patch_ini = list(patch_ini) # create a copy so we don't mutate the default arg
+        patch_ini=[64,192,128]
         for i in range(self.depth):
             for j in range(3):
                 patch_ini[j] = int(patch_ini[j]/strides[i][0])
@@ -1494,12 +1408,10 @@ class HCMA(nn.Module):
                 # print(x_dec.shape)
             elif i == self.depth:
                 x_dec = self.decoders[i-1](x_dec, x_down)
-                x_dec = _sanitize_tensor(x_dec)
                 decoder_features.append(x_dec)
                 # print(x_dec.shape)
             else:
                 x_dec = self.decoders[i-1](x_dec, self.skips[i](x_down))
-                x_dec = _sanitize_tensor(x_dec)
                 x_down = encoder_features[self.depth-i][0]
                 decoder_features.append(x_dec)
                 # print(x_dec.shape)
@@ -1507,9 +1419,9 @@ class HCMA(nn.Module):
         if self.deep_supervision:
             return [m(mask) for m, mask in zip(self.out, decoder_features)][::-1]
         elif self.predict_mode:
-            return _sanitize_tensor(self.out[-1](decoder_features[-1]))
+            return self.out[-1](decoder_features[-1])
         else:
-            return _sanitize_tensor(x_dec), _sanitize_tensor(self.out[-1](decoder_features[-1]))
+            return x_dec, self.out[-1](decoder_features[-1])
 
 
 if __name__ == "__main__":

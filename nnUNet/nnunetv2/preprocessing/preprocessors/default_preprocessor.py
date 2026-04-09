@@ -13,7 +13,7 @@
 #    limitations under the License.
 import multiprocessing
 import shutil
-from time import sleep
+import time
 from typing import Tuple, Union
 
 import numpy as np
@@ -217,12 +217,16 @@ class DefaultPreprocessor(object):
 
         output_directory = join(nnUNet_preprocessed, dataset_name, configuration_manager.data_identifier)
 
-        if isdir(output_directory):
-            shutil.rmtree(output_directory)
-
         maybe_mkdir_p(output_directory)
 
         dataset = get_filenames_of_train_images_and_targets(join(nnUNet_raw, dataset_name), dataset_json)
+        case_ids_to_process = [
+            k for k in dataset.keys()
+            if not (isfile(join(output_directory, k + '.npz')) and isfile(join(output_directory, k + '.pkl')))
+        ]
+
+        if self.verbose and len(case_ids_to_process) != len(dataset):
+            print(f'Resume mode: skipping {len(dataset) - len(case_ids_to_process)} already preprocessed cases.')
 
         # identifiers = [os.path.basename(i[:-len(dataset_json['file_ending'])]) for i in seg_fnames]
         # output_filenames_truncated = [join(output_directory, i) for i in identifiers]
@@ -230,18 +234,18 @@ class DefaultPreprocessor(object):
         # multiprocessing magic.
         r = []
         with multiprocessing.get_context("spawn").Pool(num_processes) as p:
-            remaining = list(range(len(dataset)))
+            remaining = list(range(len(case_ids_to_process)))
             # p is pretty nifti. If we kill workers they just respawn but don't do any work.
             # So we need to store the original pool of workers.
             workers = [j for j in p._pool]
 
-            for k in dataset.keys():
+            for k in case_ids_to_process:
                 r.append(p.starmap_async(self.run_case_save,
                                          ((join(output_directory, k), dataset[k]['images'], dataset[k]['label'],
                                            plans_manager, configuration_manager,
                                            dataset_json),)))
 
-            with tqdm(desc=None, total=len(dataset), disable=self.verbose) as pbar:
+            with tqdm(desc=None, total=len(case_ids_to_process), disable=self.verbose) as pbar:
                 while len(remaining) > 0:
                     all_alive = all([j.is_alive() for j in workers])
                     if not all_alive:
@@ -259,7 +263,7 @@ class DefaultPreprocessor(object):
                         r[_].get()  # allows triggering errors
                         pbar.update()
                     remaining = [i for i in remaining if i not in done]
-                    sleep(0.1)
+                    time.sleep(0.1)
 
     def modify_seg_fn(self, seg: np.ndarray, plans_manager: PlansManager, dataset_json: dict,
                       configuration_manager: ConfigurationManager) -> np.ndarray:

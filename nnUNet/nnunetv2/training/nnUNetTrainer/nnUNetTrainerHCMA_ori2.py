@@ -1,7 +1,6 @@
 import torch
 from torch import autocast
 import numpy as np
-from nnunetv2.training.nnUNetTrainer.variants.network_architecture.HCMA import HCMA
 from torch.cuda.amp import autocast as dummy_context
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 import torch.nn as nn
@@ -13,6 +12,15 @@ from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
 
 from typing import Union, Tuple, List
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.UXNet import UXNET
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.HCMA import HCMA
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.moganet import MogaNet
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.SwinUNETRv2 import SwinUNETR
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.UNETR import UNETR
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.AttentionUnet import AttentionUnet
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.MedNeXt import MedNeXt
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.unetrpp import UNETR_PP
+from nnunetv2.training.nnUNetTrainer.variants.network_architecture.nnFormer import nnFormer
 class nnUNetTrainerHCMA(nnUNetTrainer):
     def __init__(
         self,
@@ -27,7 +35,7 @@ class nnUNetTrainerHCMA(nnUNetTrainer):
         super().__init__(
             plans, configuration, fold, dataset_json, unpack_dataset, exp_name,device
         )
-        self.num_epochs = 100
+        self.num_epochs = 500
         self.oversample_foreground_percent = 0.33
         self.num_iterations_per_epoch = 200
         self.batch_size = 2
@@ -82,10 +90,9 @@ class nnUNetTrainerHCMA(nnUNetTrainer):
             if self.device.type == "cuda"
             else dummy_context()
         ):
-            fea, output = self.network(data)
-            self._validate_target_labels(target, output.shape[1])
-            # Enable FRLoss path: loss(logits, target, feature)
-            l = self.loss(output, target, fea)
+            fea,output = self.network(data)
+            # del data
+            l = self.loss(fea,output, target)
 
         if self.grad_scaler is not None:
             self.grad_scaler.scale(l).backward()
@@ -115,10 +122,9 @@ class nnUNetTrainerHCMA(nnUNetTrainer):
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
-            fea, output = self.network(data)
-            self._validate_target_labels(target, output.shape[1])
+            fea,output = self.network(data)
             del data
-            l = self.loss(output, target, fea)
+            l = self.loss(fea, output, target)
 
         # we only need the output with the highest output resolution (if DS enabled)
         if self.enable_deep_supervision:
@@ -201,7 +207,7 @@ class nnUNetTrainerHCMA(nnUNetTrainer):
         #     deep_supervision=enable_deep_supervision,
         # )
         # model = FrigeSelfAxialMamba(num_input_channels,2,predict_mode=False)
-        model = HCMA(num_input_channels, num_output_channels, predict_mode=False)
+        # model = HCMA(num_input_channels,2,predict_mode=True)
         # model = AxialMamba(num_input_channels,2,predict_mode=False)
         # model = SingleBaselinev5(num_input_channels,2,predict_mode=True)
         # model = SingleMamba(num_input_channels,2,predict_mode=True)
@@ -234,18 +240,18 @@ class nnUNetTrainerHCMA(nnUNetTrainer):
         #         predict_mode=True
         #     )
 
-        # model=MedNeXt(
-        # in_channels=num_input_channels,
-        # n_channels=32,
-        # n_classes=2,
-        # exp_r=[2, 3, 4, 4, 4, 4, 4, 3, 2],
-        # kernel_size=3,
-        # deep_supervision=False,
-        # do_res=True,
-        # do_res_up_down=True,
-        # block_counts=[2, 2, 2, 2, 2, 2, 2, 2, 2],
-        # predict_mode=True
-        # )
+        model=MedNeXt(
+        in_channels=num_input_channels,
+        n_channels=32,
+        n_classes=2,
+        exp_r=[2, 3, 4, 4, 4, 4, 4, 3, 2],
+        kernel_size=3,
+        deep_supervision=False,
+        do_res=True,
+        do_res_up_down=True,
+        block_counts=[2, 2, 2, 2, 2, 2, 2, 2, 2],
+        predict_mode=True
+        )
 
 
         
@@ -279,55 +285,6 @@ class nnUNetTrainerHCMA(nnUNetTrainer):
         #     predict_mode=True
         # )
         return model
-
-    @staticmethod
-    def _set_predict_mode_recursive(module: nn.Module, value: bool):
-        """Set predict_mode for wrapped or nested modules when the attribute exists."""
-        if hasattr(module, 'predict_mode'):
-            module.predict_mode = value
-
-        # Handle wrapped modules (DDP / compile wrappers) and nested modules.
-        for attr in ('module', '_orig_mod'):
-            if hasattr(module, attr):
-                inner = getattr(module, attr)
-                if isinstance(inner, nn.Module) and hasattr(inner, 'predict_mode'):
-                    inner.predict_mode = value
-
-    def _validate_target_labels(self, target, num_classes: int):
-        if self.label_manager.has_regions:
-            return
-
-        t = target[0] if isinstance(target, list) else target
-        if t.dtype != torch.long:
-            t = t.long()
-
-        if self.label_manager.has_ignore_label:
-            valid = t[t != self.label_manager.ignore_label]
-        else:
-            valid = t
-
-        if valid.numel() == 0:
-            return
-
-        min_label = int(valid.min().item())
-        max_label = int(valid.max().item())
-        if min_label < 0 or max_label >= num_classes:
-            raise RuntimeError(
-                f"Target label out of range. min={min_label}, max={max_label}, "
-                f"num_classes={num_classes}. Check dataset labels and num_output_channels."
-            )
-
-    def perform_actual_validation(self, save_probabilities: bool = False):
-        """
-        HCMA training path expects (features, logits), but nnUNet final validation
-        predictor expects single logits tensor. Temporarily switch predict_mode to
-        True only for full-volume validation, then restore afterwards.
-        """
-        self._set_predict_mode_recursive(self.network, True)
-        try:
-            return super().perform_actual_validation(save_probabilities)
-        finally:
-            self._set_predict_mode_recursive(self.network, False)
 
     def set_deep_supervision_enabled(self, enabled: bool):
         pass

@@ -146,9 +146,10 @@ class PatchEmbedding(nn.Module):
     def forward(self, x):
         # standard embedding patch
         patches = self.patch_embeddings(x)
+        patch_shape = patches.shape[2:]
         patches = patches.flatten(2).transpose(1, 2)
         patches = self.norm(patches)
-        return patches
+        return patches, patch_shape
 
 
 class SelfAttention(nn.Module):
@@ -193,7 +194,7 @@ class SelfAttention(nn.Module):
             )
             self.sr_norm = nn.LayerNorm(embed_dim)
 
-    def forward(self, x):
+    def forward(self, x, spatial_shape):
         # (batch_size, num_patches, hidden_size)
         B, N, C = x.shape
 
@@ -205,9 +206,9 @@ class SelfAttention(nn.Module):
         )
 
         if self.sr_ratio > 1:
-            n = cube_root(N)
+            d, h, w = spatial_shape
             # (batch_size, sequence_length, embed_dim) -> (batch_size, embed_dim, patch_D, patch_H, patch_W)
-            x_ = x.permute(0, 2, 1).reshape(B, C, n, n, n)
+            x_ = x.permute(0, 2, 1).reshape(B, C, d, h, w)
             # (batch_size, embed_dim, patch_D, patch_H, patch_W) -> (batch_size, embed_dim, patch_D/sr_ratio, patch_H/sr_ratio, patch_W/sr_ratio)
             x_ = self.sr(x_).reshape(B, C, -1).permute(0, 2, 1)
             # (batch_size, embed_dim, patch_D/sr_ratio, patch_H/sr_ratio, patch_W/sr_ratio) -> (batch_size, sequence_length, embed_dim)
@@ -273,9 +274,9 @@ class TransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(embed_dim)
         self.mlp = _MLP(in_feature=embed_dim, mlp_ratio=mlp_ratio, dropout=0.0)
 
-    def forward(self, x):
-        x = x + self.attention(self.norm1(x))
-        x = x + self.mlp(self.norm2(x))
+    def forward(self, x, spatial_shape):
+        x = x + self.attention(self.norm1(x), spatial_shape)
+        x = x + self.mlp(self.norm2(x), spatial_shape)
         return x
 
 
@@ -404,47 +405,47 @@ class MixVisionTransformer(nn.Module):
         # (batch_size, num_patches, hidden_state) -> (batch_size, hidden_state, D, H, W)
 
         # stage 1
-        x = self.embed_1(x)
+        x, spatial_shape = self.embed_1(x)
         B, N, C = x.shape
-        n = cube_root(N)
         for i, blk in enumerate(self.tf_block1):
-            x = blk(x)
+            x = blk(x, spatial_shape)
         x = self.norm1(x)
+        d, h, w = spatial_shape
         # (B, N, C) -> (B, D, H, W, C) -> (B, C, D, H, W)
-        x = x.reshape(B, n, n, n, -1).permute(0, 4, 1, 2, 3).contiguous()
+        x = x.reshape(B, d, h, w, -1).permute(0, 4, 1, 2, 3).contiguous()
         out.append(x)
 
         # stage 2
-        x = self.embed_2(x)
+        x, spatial_shape = self.embed_2(x)
         B, N, C = x.shape
-        n = cube_root(N)
         for i, blk in enumerate(self.tf_block2):
-            x = blk(x)
+            x = blk(x, spatial_shape)
         x = self.norm2(x)
+        d, h, w = spatial_shape
         # (B, N, C) -> (B, D, H, W, C) -> (B, C, D, H, W)
-        x = x.reshape(B, n, n, n, -1).permute(0, 4, 1, 2, 3).contiguous()
+        x = x.reshape(B, d, h, w, -1).permute(0, 4, 1, 2, 3).contiguous()
         out.append(x)
 
         # stage 3
-        x = self.embed_3(x)
+        x, spatial_shape = self.embed_3(x)
         B, N, C = x.shape
-        n = cube_root(N)
         for i, blk in enumerate(self.tf_block3):
-            x = blk(x)
+            x = blk(x, spatial_shape)
         x = self.norm3(x)
+        d, h, w = spatial_shape
         # (B, N, C) -> (B, D, H, W, C) -> (B, C, D, H, W)
-        x = x.reshape(B, n, n, n, -1).permute(0, 4, 1, 2, 3).contiguous()
+        x = x.reshape(B, d, h, w, -1).permute(0, 4, 1, 2, 3).contiguous()
         out.append(x)
 
         # stage 4
-        x = self.embed_4(x)
+        x, spatial_shape = self.embed_4(x)
         B, N, C = x.shape
-        n = cube_root(N)
         for i, blk in enumerate(self.tf_block4):
-            x = blk(x)
+            x = blk(x, spatial_shape)
         x = self.norm4(x)
+        d, h, w = spatial_shape
         # (B, N, C) -> (B, D, H, W, C) -> (B, C, D, H, W)
-        x = x.reshape(B, n, n, n, -1).permute(0, 4, 1, 2, 3).contiguous()
+        x = x.reshape(B, d, h, w, -1).permute(0, 4, 1, 2, 3).contiguous()
         out.append(x)
 
         return out
@@ -460,9 +461,9 @@ class _MLP(nn.Module):
         self.act_fn = nn.GELU()
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, x, spatial_shape):
         x = self.fc1(x)
-        x = self.dwconv(x)
+        x = self.dwconv(x, spatial_shape)
         x = self.act_fn(x)
         x = self.dropout(x)
         x = self.fc2(x)
@@ -477,22 +478,16 @@ class DWConv(nn.Module):
         # added batchnorm (remove it ?)
         self.bn = nn.BatchNorm3d(dim)
 
-    def forward(self, x):
+    def forward(self, x, spatial_shape):
         B, N, C = x.shape
         # (batch, patch_cube, hidden_size) -> (batch, hidden_size, D, H, W)
-        # assuming D = H = W, i.e. cube root of the patch is an integer number!
-        n = cube_root(N)
-        x = x.transpose(1, 2).view(B, C, n, n, n)
+        d, h, w = spatial_shape
+        x = x.transpose(1, 2).view(B, C, d, h, w)
         x = self.dwconv(x)
         # added batchnorm (remove it ?)
         x = self.bn(x)
         x = x.flatten(2).transpose(1, 2)
         return x
-
-###################################################################################
-def cube_root(n):
-    return round(math.pow(n, (1 / 3)))
-    
 
 ###################################################################################
 # ----------------------------------------------------- decoder -------------------
@@ -575,7 +570,7 @@ class SegFormerDecoderHead(nn.Module):
         )
 
     def forward(self, c1, c2, c3, c4):
-       ############## _MLP decoder on C1-C4 ###########
+        ############## _MLP decoder on C1-C4 ###########
         n, _, _, _, _ = c4.shape
 
         _c4 = (

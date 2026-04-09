@@ -1,7 +1,14 @@
 import torch
-from torch._dynamo import OptimizedModule
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
+
+try:
+    from torch._dynamo import OptimizedModule as _OptimizedModule
+    _OPTIMIZED_MODULE_TYPES = (_OptimizedModule,)
+except Exception:
+    # Some environments hit torch._dynamo import-time issues. Pretrained loading
+    # should still work for normal/DDP modules.
+    _OPTIMIZED_MODULE_TYPES = ()
 
 
 def load_pretrained_weights(network, fname, verbose=False):
@@ -30,7 +37,7 @@ def load_pretrained_weights(network, fname, verbose=False):
         mod = network.module
     else:
         mod = network
-    if isinstance(mod, OptimizedModule):
+    if _OPTIMIZED_MODULE_TYPES and isinstance(mod, _OPTIMIZED_MODULE_TYPES):
         mod = mod._orig_mod
 
     model_dict = mod.state_dict()

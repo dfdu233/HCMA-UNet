@@ -14,6 +14,6 @@ class nnUNetTrainernnQuick(nnUNetTrainernn):
         device: torch.device = torch.device('cuda'),
     ):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
-        self.num_epochs = 6
-        self.num_iterations_per_epoch = 15
-        self.num_val_iterations_per_epoch = 5
+        self.num_epochs = 3
+        self.num_iterations_per_epoch = 6
+        self.num_val_iterations_per_epoch = 2

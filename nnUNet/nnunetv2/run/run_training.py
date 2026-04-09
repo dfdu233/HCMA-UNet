@@ -1,20 +1,43 @@
 import multiprocessing
 import os
 import socket
+import sys
+import time
+import importlib
 from typing import Union, Optional
 
 import nnunetv2
-import torch.cuda
-import torch.distributed as dist
-import torch.multiprocessing as mp
 from batchgenerators.utilities.file_and_folder_operations import join, isfile, load_json
 from nnunetv2.paths import nnUNet_preprocessed
 from nnunetv2.run.load_pretrained_weights import load_pretrained_weights
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
-from nnunetv2.training.nnUNetTrainer.nnUNetTrainerHCMA import nnUNetTrainerHCMA 
 from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
 from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
-from torch.backends import cudnn
+
+
+def _import_torch_stack_with_retry(max_retries: int = 2, base_sleep: float = 0.5):
+    last_err = None
+    for attempt in range(max_retries + 1):
+        try:
+            torch_mod = importlib.import_module("torch")
+            importlib.import_module("torch.cuda")
+            dist_mod = importlib.import_module("torch.distributed")
+            mp_mod = importlib.import_module("torch.multiprocessing")
+            cudnn_mod = importlib.import_module("torch.backends.cudnn")
+            return torch_mod, dist_mod, mp_mod, cudnn_mod
+        except Exception as e:
+            last_err = e
+            if attempt >= max_retries:
+                raise
+            # Drop possibly half-initialized torch modules before retrying.
+            for k in list(sys.modules.keys()):
+                if k == "torch" or k.startswith("torch."):
+                    sys.modules.pop(k, None)
+            time.sleep(base_sleep * (attempt + 1))
+    raise last_err
+
+
+torch, dist, mp, cudnn = _import_torch_stack_with_retry()
 
 
 def find_free_network_port() -> int:
@@ -37,9 +60,11 @@ def get_trainer_from_args(
     trainer_name: str = "nnUNetTrainerHCMA",
     plans_identifier: str = "nnUNetPlans",
     use_compressed: bool = False,
-    device: torch.device = torch.device("cuda"),
+    device=None,
     exp_name: str = "",
 ):
+    if device is None:
+        device = torch.device("cuda")
     # load nnunet class and do sanity checks
     nnunet_trainer = recursive_find_python_class(
         join(nnunetv2.__path__[0], "training", "nnUNetTrainer"),
@@ -90,7 +115,7 @@ def get_trainer_from_args(
 
 
 def maybe_load_checkpoint(
-    nnunet_trainer: nnUNetTrainerHCMA,
+    nnunet_trainer: nnUNetTrainer,
     continue_training: bool,
     validation_only: bool,
     pretrained_weights_file: str = None,
@@ -163,6 +188,7 @@ def run_ddp(
     pretrained_weights,
     npz,
     val_with_best,
+    val_every,
     world_size,
 ):
     setup_ddp(rank, world_size)
@@ -208,9 +234,12 @@ def run_training(
     only_run_validation: bool = False,
     disable_checkpointing: bool = False,
     val_with_best: bool = False,
-    device: torch.device = torch.device("cuda"),
+    val_every: int = 10,
+    device=None,
     exp_name: str = "",
 ):
+    if device is None:
+        device = torch.device("cuda")
     if plans_identifier == "nnUNetPlans":
         print(
             "\n############################\n"
@@ -260,6 +289,7 @@ def run_training(
                 pretrained_weights,
                 export_validation_probabilities,
                 val_with_best,
+                val_every,
                 num_gpus,
             ),
             nprocs=num_gpus,
@@ -276,7 +306,6 @@ def run_training(
             device=device,
             exp_name=exp_name,
         )
-
         if disable_checkpointing:
             nnunet_trainer.disable_checkpointing = disable_checkpointing
 
@@ -357,12 +386,21 @@ def run_training_entry():
     )
 
     parser.add_argument(
+        "--val_every",
+        type=int,
+        default=10,
+        required=False,
+        help="[OPTIONAL] Run online validation every N epochs during training. Default: 10",
+    )
+
+    parser.add_argument(
         "--exp_name",
         type=str,
         default="test",
         required=False,
         help="[OPTIONAL] Experiment name to be used for this training run. Default: ''",
     )
+
     parser.add_argument(
         "--npz",
         action="store_true",
@@ -442,6 +480,7 @@ def run_training_entry():
         args.val,
         args.disable_checkpointing,
         args.val_best,
+        args.val_every,
         exp_name=args.exp_name,
         device=device,
     )

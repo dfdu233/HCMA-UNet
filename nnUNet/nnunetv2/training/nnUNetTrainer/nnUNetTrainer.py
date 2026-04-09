@@ -188,7 +188,7 @@ class nnUNetTrainer(object):
         # self.configure_rotation_dummyDA_mirroring_and_inital_patch_size and will be saved in checkpoints
 
         ### checkpoint saving stuff
-        self.save_every = 50
+        self.save_every = 5
         self.disable_checkpointing = False
 
         ## DDP batch size and oversampling can differ between workers and needs adaptation
@@ -1135,9 +1135,7 @@ class nnUNetTrainer(object):
         self.logger.log('epoch_end_timestamps', time(), self.current_epoch)
 
         self.print_to_log_file('train_loss', np.round(self.logger.my_fantastic_logging['train_losses'][-1], decimals=4))
-        self.print_to_log_file('val_loss', np.round(self.logger.my_fantastic_logging['val_losses'][-1], decimals=4))
-        self.print_to_log_file('Pseudo dice', [np.round(i, decimals=4) for i in
-                                               self.logger.my_fantastic_logging['dice_per_class_or_region'][-1]])
+        self.print_to_log_file('online validation disabled (final validation only)')
         self.print_to_log_file(
             f"Epoch time: {np.round(self.logger.my_fantastic_logging['epoch_end_timestamps'][-1] - self.logger.my_fantastic_logging['epoch_start_timestamps'][-1], decimals=2)} s")
 
@@ -1145,12 +1143,6 @@ class nnUNetTrainer(object):
         current_epoch = self.current_epoch
         if (current_epoch + 1) % self.save_every == 0 and current_epoch != (self.num_epochs - 1):
             self.save_checkpoint(join(self.output_folder, 'checkpoint_latest.pth'))
-
-        # handle 'best' checkpointing. ema_fg_dice is computed by the logger and can be accessed like this
-        if self._best_ema is None or self.logger.my_fantastic_logging['ema_fg_dice'][-1] > self._best_ema:
-            self._best_ema = self.logger.my_fantastic_logging['ema_fg_dice'][-1]
-            self.print_to_log_file(f"Yayy! New best EMA pseudo Dice: {np.round(self._best_ema, decimals=4)}")
-            self.save_checkpoint(join(self.output_folder, 'checkpoint_best.pth'))
 
         if self.local_rank == 0:
             self.logger.plot_progress_png(self.output_folder)
@@ -1160,25 +1152,49 @@ class nnUNetTrainer(object):
     def save_checkpoint(self, filename: str) -> None:
         if self.local_rank == 0:
             if not self.disable_checkpointing:
-                if self.is_ddp:
-                    mod = self.network.module
-                else:
-                    mod = self.network
-                if isinstance(mod, OptimizedModule):
-                    mod = mod._orig_mod
+                max_retries = 3
+                saved_ok = False
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        if self.is_ddp:
+                            mod = self.network.module
+                        else:
+                            mod = self.network
+                        if isinstance(mod, OptimizedModule):
+                            mod = mod._orig_mod
 
-                checkpoint = {
-                    'network_weights': mod.state_dict(),
-                    'optimizer_state': self.optimizer.state_dict(),
-                    'grad_scaler_state': self.grad_scaler.state_dict() if self.grad_scaler is not None else None,
-                    'logging': self.logger.get_checkpoint(),
-                    '_best_ema': self._best_ema,
-                    'current_epoch': self.current_epoch + 1,
-                    'init_args': self.my_init_kwargs,
-                    'trainer_name': self.__class__.__name__,
-                    'inference_allowed_mirroring_axes': self.inference_allowed_mirroring_axes,
-                }
-                torch.save(checkpoint, filename)
+                        checkpoint = {
+                            'network_weights': mod.state_dict(),
+                            'optimizer_state': self.optimizer.state_dict(),
+                            'grad_scaler_state': self.grad_scaler.state_dict() if self.grad_scaler is not None else None,
+                            'logging': self.logger.get_checkpoint(),
+                            '_best_ema': self._best_ema,
+                            'current_epoch': self.current_epoch + 1,
+                            'init_args': self.my_init_kwargs,
+                            'trainer_name': self.__class__.__name__,
+                            'inference_allowed_mirroring_axes': self.inference_allowed_mirroring_axes,
+                        }
+                        torch.save(checkpoint, filename)
+                        saved_ok = True
+                        break
+                    except ValueError as e:
+                        # Guard against transient interpreter/runtime corruption that can
+                        # sporadically break state_dict serialization.
+                        msg = str(e)
+                        if 'too many values to unpack' in msg:
+                            self.print_to_log_file(
+                                f'WARNING: checkpoint save failed on attempt {attempt}/{max_retries}: {msg}'
+                            )
+                            if attempt < max_retries:
+                                sleep(0.5 * attempt)
+                                continue
+                            self.print_to_log_file(
+                                'WARNING: skipping this checkpoint save to keep training alive; next save will retry.'
+                            )
+                            break
+                        raise
+                if not saved_ok:
+                    return
             else:
                 self.print_to_log_file('No checkpoint written, checkpointing is disabled')
 
@@ -1234,14 +1250,25 @@ class nnUNetTrainer(object):
                                    "forward pass (where compile is triggered) already has deep supervision disabled. "
                                    "This is exactly what we need in perform_actual_validation")
 
-        predictor = nnUNetPredictor(tile_step_size=0.5, use_gaussian=True, use_mirroring=True,
+        tile_step_size = float(os.environ.get('NNUNET_VAL_TILE_STEP_SIZE', '0.5'))
+        use_gaussian = os.environ.get('NNUNET_VAL_USE_GAUSSIAN', '1').lower() in ('1', 'true', 't', 'yes', 'y')
+        use_mirroring = os.environ.get('NNUNET_VAL_USE_MIRRORING', '1').lower() in ('1', 'true', 't', 'yes', 'y')
+        num_export_processes = int(os.environ.get('NNUNET_VAL_EXPORT_PROCS', str(default_num_processes)))
+
+        self.print_to_log_file(
+            f'validation predictor settings: tile_step_size={tile_step_size}, '
+            f'use_mirroring={use_mirroring}, use_gaussian={use_gaussian}, '
+            f'export_procs={num_export_processes}'
+        )
+
+        predictor = nnUNetPredictor(tile_step_size=tile_step_size, use_gaussian=use_gaussian, use_mirroring=use_mirroring,
                                     perform_everything_on_device=True, device=self.device, verbose=False,
                                     verbose_preprocessing=False, allow_tqdm=False)
         predictor.manual_initialization(self.network, self.plans_manager, self.configuration_manager, None,
                                         self.dataset_json, self.__class__.__name__,
                                         self.inference_allowed_mirroring_axes)
 
-        with multiprocessing.get_context("spawn").Pool(default_num_processes) as segmentation_export_pool:
+        with multiprocessing.get_context("spawn").Pool(num_export_processes) as segmentation_export_pool:
             worker_list = [i for i in segmentation_export_pool._pool]
             validation_output_folder = join(self.output_folder, 'validation')
             maybe_mkdir_p(validation_output_folder)
@@ -1250,20 +1277,41 @@ class nnUNetTrainer(object):
             # the validation keys across the workers.
             _, val_keys = self.do_split()
             if self.is_ddp:
-                last_barrier_at_idx = len(val_keys) // dist.get_world_size() - 1
-
                 val_keys = val_keys[self.local_rank:: dist.get_world_size()]
                 # we cannot just have barriers all over the place because the number of keys each GPU receives can be
                 # different
-
-            dataset_val = nnUNetDataset(self.preprocessed_dataset_folder, val_keys,
-                                        folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
-                                        num_images_properties_loading_threshold=0)
 
             next_stages = self.configuration_manager.next_stage_names
 
             if next_stages is not None:
                 _ = [maybe_mkdir_p(join(self.output_folder_base, 'predicted_next_stage', n)) for n in next_stages]
+
+            # Resume support: skip cases that already have all required exported files.
+            val_keys_to_process = []
+            num_skipped = 0
+            for k in val_keys:
+                pred_done = isfile(join(validation_output_folder, k + self.dataset_json["file_ending"]))
+                next_stage_done = True
+                if next_stages is not None:
+                    for n in next_stages:
+                        if not isfile(join(self.output_folder_base, 'predicted_next_stage', n, k + '.npz')):
+                            next_stage_done = False
+                            break
+                if pred_done and next_stage_done:
+                    num_skipped += 1
+                else:
+                    val_keys_to_process.append(k)
+
+            self.print_to_log_file(
+                f"Validation resume: total assigned={len(val_keys)}, skipped={num_skipped}, to_process={len(val_keys_to_process)}"
+            )
+
+            if self.is_ddp:
+                last_barrier_at_idx = len(val_keys_to_process) - 1
+
+            dataset_val = nnUNetDataset(self.preprocessed_dataset_folder, val_keys_to_process,
+                                        folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
+                                        num_images_properties_loading_threshold=0)
 
             results = []
 
@@ -1375,13 +1423,6 @@ class nnUNetTrainer(object):
             for batch_id in range(self.num_iterations_per_epoch):
                 train_outputs.append(self.train_step(next(self.dataloader_train)))
             self.on_train_epoch_end(train_outputs)
-
-            with torch.no_grad():
-                self.on_validation_epoch_start()
-                val_outputs = []
-                for batch_id in range(self.num_val_iterations_per_epoch):
-                    val_outputs.append(self.validation_step(next(self.dataloader_val)))
-                self.on_validation_epoch_end(val_outputs)
 
             self.on_epoch_end()
 

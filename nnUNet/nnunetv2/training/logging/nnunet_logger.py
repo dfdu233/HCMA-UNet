@@ -1,9 +1,5 @@
-import matplotlib
 from batchgenerators.utilities.file_and_folder_operations import join
-
-matplotlib.use('agg')
-import seaborn as sns
-import matplotlib.pyplot as plt
+import math
 
 
 class nnUNetLogger(object):
@@ -37,7 +33,12 @@ class nnUNetLogger(object):
 
         if self.verbose: print(f'logging {key}: {value} for epoch {epoch}')
 
-        if len(self.my_fantastic_logging[key]) < (epoch + 1):
+        # Keep one slot per epoch even when some metrics are logged sparsely
+        # (for example validation every N epochs).
+        while len(self.my_fantastic_logging[key]) < epoch:
+            self.my_fantastic_logging[key].append(float('nan'))
+
+        if len(self.my_fantastic_logging[key]) == epoch:
             self.my_fantastic_logging[key].append(value)
         else:
             assert len(self.my_fantastic_logging[key]) == (epoch + 1), 'something went horribly wrong. My logging ' \
@@ -47,11 +48,28 @@ class nnUNetLogger(object):
 
         # handle the ema_fg_dice special case! It is automatically logged when we add a new mean_fg_dice
         if key == 'mean_fg_dice':
-            new_ema_pseudo_dice = self.my_fantastic_logging['ema_fg_dice'][epoch - 1] * 0.9 + 0.1 * value \
-                if len(self.my_fantastic_logging['ema_fg_dice']) > 0 else value
+            prev_ema = None
+            for prev in reversed(self.my_fantastic_logging['ema_fg_dice']):
+                if isinstance(prev, float) and math.isnan(prev):
+                    continue
+                prev_ema = prev
+                break
+            new_ema_pseudo_dice = (prev_ema * 0.9 + 0.1 * value) if prev_ema is not None else value
             self.log('ema_fg_dice', new_ema_pseudo_dice, epoch)
 
     def plot_progress_png(self, output_folder):
+        try:
+            import matplotlib
+            matplotlib.use('agg')
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+        except Exception as e:
+            # Plotting is optional. Training/validation should continue even if
+            # visualization dependencies are unavailable.
+            if self.verbose:
+                print(f'plot_progress_png skipped: {e}')
+            return
+
         # we infer the epoch form our internal logging
         epoch = min([len(i) for i in self.my_fantastic_logging.values()]) - 1  # lists of epoch 0 have len 1
         sns.set(font_scale=2.5)

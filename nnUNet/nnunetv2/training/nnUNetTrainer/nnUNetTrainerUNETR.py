@@ -31,5 +31,5 @@ class nnUNetTrainerUNETR(nnUNetTrainer):
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
         patch_size = tuple(int(s) for s in self.configuration_manager.patch_size)
-        model = UNETR(num_input_channels, num_output_channels, img_size=patch_size, predict_mode=False)
+        model = UNETR(num_input_channels, num_output_channels, img_size=patch_size, predict_mode=True)
         return model

@@ -1,8 +1,10 @@
+import os
 import torch
 from torch import nn
 from typing import Union, Tuple, List
 
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
 from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
 
 
@@ -18,7 +20,8 @@ class nnUNetTrainernn(nnUNetTrainer):
         device: torch.device = torch.device('cuda'),
     ):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
-        self.configuration_manager.configuration['batch_size'] = 1
+        desired_bs = max(1, int(os.environ.get('NNUNET_NN_BATCH_SIZE', '2')))
+        self.configuration_manager.configuration['batch_size'] = desired_bs
         self.enable_deep_supervision = False
         self.num_epochs = 200
         self.oversample_foreground_percent = 0.33
@@ -33,14 +36,9 @@ class nnUNetTrainernn(nnUNetTrainer):
             weight_decay=self.weight_decay,
             betas=(0.9, 0.95),
         )
-        lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer,
-            max_lr=self.initial_lr,
-            epochs=self.num_epochs,
-            pct_start=0.06,
-            steps_per_epoch=self.num_iterations_per_epoch,
-            anneal_strategy='linear',
-        )
+        # Base trainer steps scheduler once per epoch, so use the nnUNet default
+        # epoch-wise scheduler to avoid LR collapsing when switching optimizers.
+        lr_scheduler = PolyLRScheduler(optimizer, self.initial_lr, self.num_epochs)
         return optimizer, lr_scheduler
 
     @staticmethod

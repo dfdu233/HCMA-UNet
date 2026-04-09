@@ -18,7 +18,7 @@ class nnUNetTrainerAttentionUnet(nnUNetTrainer):
     ):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
         self.enable_deep_supervision = False
-        self.num_epochs = 200
+        self.num_epochs = 300
         self.enable_deep_supervision = False  # Custom models mostly don't support deep supervision directly here
 
     def build_network_architecture(
@@ -30,5 +30,5 @@ class nnUNetTrainerAttentionUnet(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = AttentionUnet(3, in_channels=num_input_channels, out_channels=num_output_channels, channels=[32, 64, 128, 256, 512], strides=[2, 2, 2, 2], predict_mode=False)
+        model = AttentionUnet(3, in_channels=num_input_channels, out_channels=num_output_channels, channels=[32, 64, 128, 256, 512], strides=[2, 2, 2, 2], predict_mode=True)
         return model
