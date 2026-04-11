@@ -1287,9 +1287,15 @@ class nnUNetTrainer(object):
                 _ = [maybe_mkdir_p(join(self.output_folder_base, 'predicted_next_stage', n)) for n in next_stages]
 
             # Resume support: skip cases that already have all required exported files.
+            force_recompute_val = os.environ.get('NNUNET_VAL_FORCE_RECOMPUTE', '0').lower() in (
+                '1', 'true', 't', 'yes', 'y'
+            )
             val_keys_to_process = []
             num_skipped = 0
             for k in val_keys:
+                if force_recompute_val:
+                    val_keys_to_process.append(k)
+                    continue
                 pred_done = isfile(join(validation_output_folder, k + self.dataset_json["file_ending"]))
                 next_stage_done = True
                 if next_stages is not None:
@@ -1305,6 +1311,8 @@ class nnUNetTrainer(object):
             self.print_to_log_file(
                 f"Validation resume: total assigned={len(val_keys)}, skipped={num_skipped}, to_process={len(val_keys_to_process)}"
             )
+            if force_recompute_val:
+                self.print_to_log_file("Validation resume disabled by NNUNET_VAL_FORCE_RECOMPUTE=1")
 
             if self.is_ddp:
                 last_barrier_at_idx = len(val_keys_to_process) - 1

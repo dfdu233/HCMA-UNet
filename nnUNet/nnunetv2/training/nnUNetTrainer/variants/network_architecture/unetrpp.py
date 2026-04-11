@@ -1432,6 +1432,7 @@ class UNETR_PP(SegmentationNetwork):
             self,
             in_channels: int,
             out_channels: int,
+            img_size: Union[Tuple[int, int, int], List[int]] = (128, 128, 128),
             feature_size: int = 16,
             hidden_size: int = 128,
             num_heads: int = 4,
@@ -1475,10 +1476,31 @@ class UNETR_PP(SegmentationNetwork):
         if pos_embed not in ["conv", "perceptron"]:
             raise KeyError(f"Position embedding layer of type {pos_embed} is not supported.")
 
-        self.feat_size = (4, 4, 4,)
+        img_size = tuple(int(i) for i in img_size)
+        if len(img_size) != 3:
+            raise ValueError(f"img_size must be 3D, got {img_size}")
+
+        # UNETR++ stem/downsampling path: /4 at stem, then /2 x3.
+        s0 = tuple(i // 4 for i in img_size)
+        s1 = tuple(i // 8 for i in img_size)
+        s2 = tuple(i // 16 for i in img_size)
+        s3 = tuple(i // 32 for i in img_size)
+        for s in (s0, s1, s2, s3):
+            if any(v <= 0 for v in s):
+                raise ValueError(f"img_size too small for UNETR++ hierarchy: {img_size}")
+
+        encoder_token_sizes = [int(np.prod(s0)), int(np.prod(s1)), int(np.prod(s2)), int(np.prod(s3))]
+
+        self.feat_size = s3
         self.hidden_size = hidden_size
 
-        self.unetr_pp_encoder = UnetrPPEncoder(dims=dims, depths=depths, num_heads=num_heads, in_channels=in_channels)
+        self.unetr_pp_encoder = UnetrPPEncoder(
+            input_size=encoder_token_sizes,
+            dims=dims,
+            depths=depths,
+            num_heads=num_heads,
+            in_channels=in_channels,
+        )
 
         self.encoder1 = UnetResBlock(
             spatial_dims=3,
@@ -1495,7 +1517,7 @@ class UNETR_PP(SegmentationNetwork):
             kernel_size=3,
             upsample_kernel_size=2,
             norm_name=norm_name,
-            out_size=8*8*8,
+            out_size=int(np.prod(s2)),
         )
         self.decoder4 = UnetrUpBlock(
             spatial_dims=3,
@@ -1504,7 +1526,7 @@ class UNETR_PP(SegmentationNetwork):
             kernel_size=3,
             upsample_kernel_size=2,
             norm_name=norm_name,
-            out_size=16*16*16,
+            out_size=int(np.prod(s1)),
         )
         self.decoder3 = UnetrUpBlock(
             spatial_dims=3,
@@ -1513,7 +1535,7 @@ class UNETR_PP(SegmentationNetwork):
             kernel_size=3,
             upsample_kernel_size=2,
             norm_name=norm_name,
-            out_size=32*32*32,
+            out_size=int(np.prod(s0)),
         )
         self.decoder2 = UnetrUpBlock(
             spatial_dims=3,
@@ -1522,7 +1544,7 @@ class UNETR_PP(SegmentationNetwork):
             kernel_size=3,
             upsample_kernel_size=(4, 4, 4),
             norm_name=norm_name,
-            out_size=128*128*128,
+            out_size=int(np.prod(img_size)),
             conv_decoder=True,
         )
         self.out1 = UnetOutBlock(spatial_dims=3, in_channels=feature_size, out_channels=out_channels)

@@ -15,6 +15,13 @@ class PolyLRScheduler(_LRScheduler):
             current_step = self.ctr
             self.ctr += 1
 
-        new_lr = self.initial_lr * (1 - current_step / self.max_steps) ** self.exponent
+        if self.max_steps <= 0:
+            raise ValueError(f"max_steps must be > 0, got {self.max_steps}")
+
+        # When resuming from checkpoints, scheduler state can be ahead of max_steps.
+        # Clamp to keep the polynomial base in [0, 1] and avoid complex LRs.
+        clamped_step = min(max(int(current_step), 0), int(self.max_steps))
+        base = 1 - clamped_step / self.max_steps
+        new_lr = float(self.initial_lr * (base ** self.exponent))
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = new_lr

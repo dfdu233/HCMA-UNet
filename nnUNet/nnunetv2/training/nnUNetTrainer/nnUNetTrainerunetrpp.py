@@ -30,5 +30,20 @@ class nnUNetTrainerunetrpp(nnUNetTrainer):
         num_output_channels: int,
         enable_deep_supervision: bool = False,
     ) -> nn.Module:
-        model = UNETR_PP(in_channels=num_input_channels, out_channels=num_output_channels, feature_size=16, hidden_size=256, num_heads=8, pos_embed="perceptron", norm_name="instance", dropout_rate=0.1, depths=[3, 3, 3, 3], dims=[32, 64, 128, 256, 512], conv_op=nn.Conv3d, do_ds=False, predict_mode=True)
+        model = UNETR_PP(
+            in_channels=num_input_channels,
+            out_channels=num_output_channels,
+            img_size=tuple(self.configuration_manager.patch_size),
+            feature_size=16,
+            hidden_size=256,
+            num_heads=8,
+            pos_embed="perceptron",
+            norm_name="instance",
+            dropout_rate=0.1,
+            depths=[3, 3, 3, 3],
+            dims=[32, 64, 128, 256, 512],
+            conv_op=nn.Conv3d,
+            do_ds=False,
+            predict_mode=True,
+        )
         return model

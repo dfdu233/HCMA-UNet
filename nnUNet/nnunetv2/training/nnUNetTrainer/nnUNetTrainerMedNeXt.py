@@ -17,6 +17,7 @@ class nnUNetTrainerMedNeXt(nnUNetTrainer):
         device: torch.device = torch.device('cuda')
     ):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
+        self.batch_size = 1
         self.configuration_manager.configuration['batch_size'] = 1
         self.initial_lr = 1e-4
         self.enable_deep_supervision = False

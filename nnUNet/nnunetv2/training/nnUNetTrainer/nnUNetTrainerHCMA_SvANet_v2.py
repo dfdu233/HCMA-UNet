@@ -1,12 +1,20 @@
 import torch
 from torch import autocast
 import numpy as np
+import os
+import glob
 from torch import nn
 from typing import Union, Tuple, List
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.training.nnUNetTrainer.variants.network_architecture.HCMA_SvANet_v2 import HCMA_SvANet_v2
 from torch.cuda.amp import autocast as dummy_context
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn
+from batchgenerators.utilities.file_and_folder_operations import join, maybe_mkdir_p
+from nnunetv2.evaluation.evaluate_predictions import compute_metrics
+from nnunetv2.inference.export_prediction import export_prediction_from_logits
+from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
+from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDataset
+from nnunetv2.utilities.label_handling.label_handling import convert_labelmap_to_one_hot
 
 class nnUNetTrainerHCMA_SvANet_v2(nnUNetTrainer):
     def __init__(
@@ -28,9 +36,20 @@ class nnUNetTrainerHCMA_SvANet_v2(nnUNetTrainer):
         self.weight_decay = 5e-2
         self.num_iterations_per_epoch = 200
         self.max_grad_norm = 12.0
-        self.frloss_warmup_epochs = 2
+        self.frloss_warmup_epochs = 0
         self._last_finite_loss = 1.0
         self._nonfinite_batches = 0
+        # Case-004 gate is optional for ablations; disabled by default to avoid
+        # introducing extra bias/overhead in baseline SvANet training.
+        self.case004_check_every = int(os.environ.get("NNUNET_CASE004_CHECK_EVERY", "0"))
+        self.case004_dice_threshold = float(os.environ.get("NNUNET_CASE004_DICE_THRESHOLD", "0.7"))
+        self.case004_key_preferred = "case_004"
+        self._case004_reached_threshold = False
+        self.svanet_init_from_hcma = os.environ.get("NNUNET_SVANET_INIT_FROM_HCMA", "1").lower() in (
+            "1", "true", "t", "yes", "y"
+        )
+        self.svanet_init_hcma_ckpt = os.environ.get("NNUNET_HCMA_CKPT", "/root/workspace/nnUNet_results/Dataset666_Breast/nnUNetTrainerHCMA__nnUNetPlans__3d_fullres_v1/666_3d_fullres_nnUNetTrainerHCMA_fold0/fold_0/checkpoint_final.pth").strip()
+        self._warmstarted_from_hcma = False
 
     @staticmethod
     def _is_finite_tensor(x) -> bool:
@@ -255,3 +274,185 @@ class nnUNetTrainerHCMA_SvANet_v2(nnUNetTrainer):
             return super().perform_actual_validation(save_probabilities)
         finally:
             self._set_predict_mode_recursive(self.network, False)
+
+    def _resolve_hcma_checkpoint(self) -> str:
+        if self.svanet_init_hcma_ckpt:
+            return self.svanet_init_hcma_ckpt
+
+        dataset_name = self.plans_manager.dataset_name
+        fold_dir = f"fold_{self.fold}"
+        pattern = os.path.join(
+            os.environ.get("nnUNet_results", "/root/workspace/nnUNet_results"),
+            dataset_name,
+            "nnUNetTrainerHCMA__*",
+            fold_dir,
+            "checkpoint_final.pth",
+        )
+        candidates = sorted(glob.glob(pattern))
+        return candidates[-1] if len(candidates) > 0 else ""
+
+    def _try_warmstart_from_hcma(self):
+        if not self.svanet_init_from_hcma or self._warmstarted_from_hcma:
+            return
+        if self.current_epoch != 0:
+            return
+
+        ckpt_path = self._resolve_hcma_checkpoint()
+        if not ckpt_path or (not os.path.isfile(ckpt_path)):
+            self.print_to_log_file("[warmstart] HCMA checkpoint not found, training from scratch")
+            self._warmstarted_from_hcma = True
+            return
+
+        checkpoint = torch.load(ckpt_path, map_location=self.device)
+        src = checkpoint.get("network_weights", checkpoint)
+
+        if self.is_ddp:
+            mod = self.network.module
+        else:
+            mod = self.network
+        if hasattr(mod, "_orig_mod"):
+            mod = mod._orig_mod
+
+        dst_state = mod.state_dict()
+        compatible = {}
+        for k, v in src.items():
+            kk = k[7:] if (k.startswith("module.") and k[7:] in dst_state) else k
+            if kk in dst_state and tuple(dst_state[kk].shape) == tuple(v.shape):
+                compatible[kk] = v
+
+        mod.load_state_dict(compatible, strict=False)
+        self.print_to_log_file(
+            f"[warmstart] initialized from HCMA checkpoint: {ckpt_path}; loaded {len(compatible)}/{len(dst_state)} tensors"
+        )
+        self._warmstarted_from_hcma = True
+
+    def on_train_start(self):
+        super().on_train_start()
+        self._try_warmstart_from_hcma()
+
+    def _find_case004_key(self):
+        _, val_keys = self.do_split()
+        if self.case004_key_preferred in val_keys:
+            return self.case004_key_preferred
+        for candidate in ("case_04", "Case_004", "Case_04"):
+            if candidate in val_keys:
+                return candidate
+        for k in val_keys:
+            if "004" in k or k.endswith("_04"):
+                return k
+        return None
+
+    def _run_single_case_validation(self, case_key: str) -> float:
+        self.set_deep_supervision_enabled(False)
+        self.network.eval()
+        self._set_predict_mode_recursive(self.network, True)
+        try:
+            tile_step_size = float(os.environ.get('NNUNET_VAL_TILE_STEP_SIZE', '0.5'))
+            use_gaussian = os.environ.get('NNUNET_VAL_USE_GAUSSIAN', '1').lower() in ('1', 'true', 't', 'yes', 'y')
+            use_mirroring = os.environ.get('NNUNET_VAL_USE_MIRRORING', '1').lower() in ('1', 'true', 't', 'yes', 'y')
+            predictor = nnUNetPredictor(
+                tile_step_size=tile_step_size,
+                use_gaussian=use_gaussian,
+                use_mirroring=use_mirroring,
+                perform_everything_on_device=True,
+                device=self.device,
+                verbose=False,
+                verbose_preprocessing=False,
+                allow_tqdm=False,
+            )
+            predictor.manual_initialization(
+                self.network,
+                self.plans_manager,
+                self.configuration_manager,
+                None,
+                self.dataset_json,
+                self.__class__.__name__,
+                self.inference_allowed_mirroring_axes,
+            )
+
+            dataset_val = nnUNetDataset(
+                self.preprocessed_dataset_folder,
+                [case_key],
+                folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
+                num_images_properties_loading_threshold=0,
+            )
+            data, seg, properties = dataset_val.load_case(case_key)
+            if self.is_cascaded:
+                data = np.vstack((
+                    data,
+                    convert_labelmap_to_one_hot(seg[-1], self.label_manager.foreground_labels, output_dtype=data.dtype),
+                ))
+            data = torch.from_numpy(np.ascontiguousarray(data.copy()))
+
+            pred_logits = predictor.predict_sliding_window_return_logits(data).cpu()
+            quick_val_folder = join(self.output_folder, 'validation_case004')
+            maybe_mkdir_p(quick_val_folder)
+            pred_file_truncated = join(quick_val_folder, case_key)
+            export_prediction_from_logits(
+                pred_logits,
+                properties,
+                self.configuration_manager,
+                self.plans_manager,
+                self.dataset_json,
+                pred_file_truncated,
+                False,
+            )
+
+            gt_file = join(self.preprocessed_dataset_folder_base, 'gt_segmentations', case_key + self.dataset_json['file_ending'])
+            pred_file = pred_file_truncated + self.dataset_json['file_ending']
+            labels = self.label_manager.foreground_regions if self.label_manager.has_regions else self.label_manager.foreground_labels
+            metric = compute_metrics(
+                gt_file,
+                pred_file,
+                self.plans_manager.image_reader_writer_class(),
+                labels,
+                self.label_manager.ignore_label,
+            )
+            case_dice = float(metric['metrics'][labels[0]]['Dice'])
+            self.print_to_log_file(
+                f"[case004-check] epoch={self.current_epoch} case={case_key} dice={case_dice:.4f} threshold={self.case004_dice_threshold:.2f}",
+                also_print_to_console=True,
+            )
+            return case_dice
+        finally:
+            self._set_predict_mode_recursive(self.network, False)
+            self.set_deep_supervision_enabled(True)
+
+    def _maybe_run_case004_gate(self):
+        if self._case004_reached_threshold:
+            return
+        if self.case004_check_every <= 0:
+            return
+        if self.current_epoch <= 0 or (self.current_epoch % self.case004_check_every) != 0:
+            return
+
+        case_key = self._find_case004_key()
+        if case_key is None:
+            self.print_to_log_file("[case004-check] case_004 not found in validation split, skip gate check")
+            return
+
+        case_dice = self._run_single_case_validation(case_key)
+        if case_dice >= self.case004_dice_threshold:
+            self._case004_reached_threshold = True
+            self.print_to_log_file(
+                f"[case004-check] Dice reached {case_dice:.4f} >= {self.case004_dice_threshold:.2f}, stop training and run full validation",
+                also_print_to_console=True,
+            )
+            self.perform_actual_validation(save_probabilities=False)
+
+    def run_training(self):
+        self.on_train_start()
+
+        while self.current_epoch < self.num_epochs and not self._case004_reached_threshold:
+            self.on_epoch_start()
+
+            self.on_train_epoch_start()
+            train_outputs = []
+            for _ in range(self.num_iterations_per_epoch):
+                train_outputs.append(self.train_step(next(self.dataloader_train)))
+            self.on_train_epoch_end(train_outputs)
+
+            self.on_epoch_end()
+            self._maybe_run_case004_gate()
+
+        self.on_train_end()

@@ -17,6 +17,7 @@ class nnUNetTrainerUMambaEncNoAMP(nnUNetTrainer):
         device: torch.device = torch.device('cuda')
     ):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, exp_name, device)
+        self.enable_deep_supervision = False
         self.max_grad_norm = 8.0
         self._last_finite_loss = 1.0
         self._nonfinite_batches = 0
@@ -42,7 +43,7 @@ class nnUNetTrainerUMambaEncNoAMP(nnUNetTrainer):
         arch_init_kwargs_req_import,
         num_input_channels,
         num_output_channels: int,
-        enable_deep_supervision: bool = True,
+        enable_deep_supervision: bool = False,
     ) -> nn.Module:
 
         if len(self.configuration_manager.patch_size) == 2:

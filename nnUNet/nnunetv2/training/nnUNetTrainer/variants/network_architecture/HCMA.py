@@ -1401,7 +1401,8 @@ class HCMA(nn.Module):
         predict_mode=False,
         is_skip=False,
         is_split=True,
-        is_slice_attention=True
+        is_slice_attention=True,
+        use_small_lesion_refine: bool = False,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -1410,6 +1411,11 @@ class HCMA(nn.Module):
         self.deep_supervision = deep_supervision
         self.predict_mode = predict_mode
         self.is_skip = is_skip
+        self.use_small_lesion_refine = use_small_lesion_refine
+        self.enable_foreground_rescue = True
+        self.min_foreground_ratio = 0.001
+        self.target_foreground_ratio = 0.004
+        self.max_foreground_boost = 3.0
         assert len(channels) == depth + 1, "len(encoder_channels) != depth + 1"
         assert len(strides) == depth, "len(strides) != depth"
 
@@ -1439,7 +1445,6 @@ class HCMA(nn.Module):
             )
 
         for i in range(self.depth):
-            patch_ini*=strides[self.depth - i - 1][0]
             for j in range(3):
                 patch_ini[j]*=strides[self.depth - i - 1][0]
             self.decoders.append(
@@ -1473,6 +1478,35 @@ class HCMA(nn.Module):
         self.out = nn.ModuleList(
             [Out(channels[depth - i - 1], n_classes) for i in range(depth)]
         )
+
+        if self.use_small_lesion_refine:
+            self.small_lesion_refine = nn.Sequential(
+                nn.Conv3d(channels[0] * 2, channels[0], kernel_size=3, padding=1, bias=False),
+                nn.InstanceNorm3d(channels[0], affine=True),
+                nn.LeakyReLU(inplace=True),
+                nn.Conv3d(channels[0], n_classes, kernel_size=1, bias=True),
+            )
+            self.small_lesion_alpha = nn.Parameter(torch.tensor(0.2, dtype=torch.float32))
+
+    def _foreground_rescue_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        if (not self.enable_foreground_rescue) or logits.ndim != 5 or logits.shape[1] != 2:
+            return logits
+
+        adjusted = logits.clone()
+        eps = 1e-6
+        for b in range(adjusted.shape[0]):
+            margin = adjusted[b, 1] - adjusted[b, 0]
+            pred_fg_ratio = float((margin > 0).float().mean().item())
+            if pred_fg_ratio >= self.min_foreground_ratio:
+                continue
+
+            flat_margin = margin.reshape(-1).float().detach()
+            q = torch.quantile(flat_margin, 1.0 - self.target_foreground_ratio)
+            boost = float((-q + eps).item())
+            if boost > 0:
+                boost = min(boost, self.max_foreground_boost)
+                adjusted[b, 1] = adjusted[b, 1] + boost
+        return adjusted
         
 
     def forward(self, x):
@@ -1504,12 +1538,19 @@ class HCMA(nn.Module):
                 decoder_features.append(x_dec)
                 # print(x_dec.shape)
 
+        base_logits = self.out[-1](decoder_features[-1])
+        if self.use_small_lesion_refine:
+            stem_feat = encoder_features[0][0]
+            refine_logits = self.small_lesion_refine(torch.cat([decoder_features[-1], stem_feat], dim=1))
+            base_logits = base_logits + self.small_lesion_alpha * refine_logits
+
         if self.deep_supervision:
             return [m(mask) for m, mask in zip(self.out, decoder_features)][::-1]
         elif self.predict_mode:
-            return _sanitize_tensor(self.out[-1](decoder_features[-1]))
+            base_logits = self._foreground_rescue_logits(base_logits)
+            return _sanitize_tensor(base_logits)
         else:
-            return _sanitize_tensor(x_dec), _sanitize_tensor(self.out[-1](decoder_features[-1]))
+            return _sanitize_tensor(x_dec), _sanitize_tensor(base_logits)
 
 
 if __name__ == "__main__":
